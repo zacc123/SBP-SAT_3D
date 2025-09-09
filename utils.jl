@@ -1015,7 +1015,7 @@ function computetraction_stripped(T, u, e, sJ)
     T_3x = [T31_1 T32_1 T33_1]
 
     τ_y_full = (-e1T * (T_2x * u)) # ./ sJ[1][:]
-    τ_z_full = (e1T * (T_3x * u)) # ./ sJ[1][:]
+    τ_z_full = (-e1T * (T_3x * u)) # ./ sJ[1][:]
    
     return [τ_y_full τ_z_full]
   

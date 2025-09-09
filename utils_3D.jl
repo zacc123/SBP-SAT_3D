@@ -88,13 +88,15 @@ function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations,
         virtual_idx = (y_idx - 1 - y_offset) * Nzp_virtual + z_idx - z_offset
 
         XXX = pth * "fltst_strk"*station_strings[n]*".txt"
-        ww = Array{Float64}(undef, 1, 6)
+        ww = Array{Float64}(undef, 1, 8)
         ww[1] = t
-        ww[2] = δ[real_idx]
-        ww[3] = δ[real_idx + (Nzp * Nyp)]
-        ww[4] = log10(RSVinit)
-        ww[5] = τz0
-        ww[6] = log10(θ[virtual_idx])  # 
+        ww[2] = δ[real_idx] #slip y
+        ww[3] = δ[real_idx + (Nzp * Nyp)] # slip z
+        ww[4] = RSVinit
+        ww[5] = RSVinit
+        ww[6] = τz0
+        ww[7] = τz0
+        ww[8] = log10(θ[virtual_idx])  # state
         open(XXX, "w") do io
         write(io, "# problem=SEAS Benchmark BP5-QD\n")  # 
         write(io, "# code=Thrase\n")
@@ -103,7 +105,7 @@ function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations,
         write(io, "# element size=xx m\n")
         write(io, "# location=on fault, z = "*string(parse(Int64, station_strings[n])/10)*" km\n")
         write(io, "# Lz = 80 km\n")
-        write(io, "t slip_y slip_z slip_rate_y slip_rate_z shear_stress state\n")
+        write(io, "# t slip_y slip_z slip_rate_y slip_rate_z shear_stress state\n")
 
         writedlm(io, ww)
     end
@@ -171,17 +173,18 @@ function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc_y, flt_loc_z, flt_lo
             real_idx = (y_idx - 1) * Nzp + z_idx
             virtual_idx = (y_idx - 1 - y_offset) * Nzp_virtual + z_idx - z_offset
             
-            ww = Array{Float64}(undef, 1, 7)
+            ww = Array{Float64}(undef, 1, 8)
             ww[1] = t
 
             ww[2] = δ[real_idx] # y comp
             ww[3] = δ[real_idx + N] # z comp
 
-            ww[4] = log10(V[real_idx]) # y comp
-            ww[5] = log10(V[real_idx + N]) # z comp
+            ww[4] = (V[real_idx]) # y comp
+            ww[5] = (V[real_idx + N]) # z comp
 
             ww[6] = τf[virtual_idx]
-            ww[7] = log10(θ[virtual_idx])
+            ww[7] = τf[virtual_idx + Nθ]
+            ww[8] = log10(θ[virtual_idx])
 
             XXX = pth * "fltst_strk"*station_strings[i]*".txt"
             open(XXX, "a") do io
@@ -311,80 +314,66 @@ end
 # every 1 second in red during coseismic
 function plot_traction_3D(filename)
 
-    grid = readdlm(filename, Float64)
+    # read in the grid
+    grid = readdlm(filename, Float64; comments=true)
     sz = size(grid)
-    flt_loc_y = grid[1,3:end]
-    flt_loc_z = grid[2,3:end]
-    T = grid[3:sz[1],1]
-    maxV = grid[3:end, 2]
-    slip = grid[3:sz[1], 3:sz[2]]
-    N = size(slip)[2]
 
 
-    ind = find_ind(maxV);        #finds indices for inter/co-seismic phases
-    interval = [5*31556926 1]   #plot every 5 years and every 1 second
+    time = grid[2:end, 1] ./ 31556926 # grab time in years
+    δy =   grid[2:end, 2] 
+    δz =   grid[2:end, 3] 
+    vy =   grid[2:end, 4]
+    vz =   grid[2:end, 5]
+    τy =   grid[2:end, 6]
+    τz =   grid[2:end, 7]
+    θ  =   grid[2:end, 8]
+
+    filename_prefix = split(filename, ".t")[1]
     
-    ct = 0   #this counts the number of events
+    plot(time, δy)
+    xlabel!("time (yrs)")
+    ylabel!("slip y (m)")
+    title!("Slip in Y Direction vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_slip_y.png")
 
+    plot(time, δz)
+    xlabel!("time (yrs)")
+    ylabel!("slip z (m)")
+    title!("Slip in Z Direction vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_slip_z.png")
 
-    #Assumes an initial interseismic period
-    #This for-loop only plots completed phases
-    for i = 1:2:length(ind)-2
-        
-        T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
+    plot(time, vy)
+    xlabel!("time (yrs)")
+    ylabel!("slip rate y (m/s)")
+    title!("Slip Rate in Y Direction vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_sliprate_y.png")
 
-        W1 = interp1(T,slip[:,1],T1)';
-        
-        for j = 2:N 
-        w1 = interp1(T,slip[:,j],T1)';
-        W1 = [W1; w1]
-        end
+    plot(time, vz)
+    xlabel!("time (yrs)")
+    ylabel!("slip rate z (m/s)")
+    title!("Slip Rate in Z Direction vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_sliprate_z.png")
 
-        if i == 1
-        plot(W1, -flt_loc, linecolor = :blue, legend = false) #interseismic phase
-        else
-        plot!(W1, -flt_loc, linecolor = :blue, legend = false) #interseismic phase
-        end
+    plot(time, τy)
+    xlabel!("time (yrs)")
+    ylabel!("τ-y")
+    title!("Stress in Y Direction vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_stress_y.png")
 
-    
-        T1 = T[ind[i+1]]:interval[2]:T[ind[i+2]];
+    plot(time, τz)
+    xlabel!("time (yrs)")
+    ylabel!("τ-z")
+    title!("Stress in Z Direction vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_stress_z.png")
 
-
-        W1 = interp1(T,slip[:,1],T1)';
-        for j = 2:N 
-        w1 = interp1(T,slip[:,j],T1)';
-        W1 = [W1; w1]
-        end
-
-        plot!(W1, -flt_loc, linecolor = :red, legend = false) #interseismic phase
-
-        ct = ct+1;
-    end
-
-    
-    # plot remainder of an incomplete interseismic period:
-    i = length(ind)-1;
-    T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
-    W1 = interp1(T,slip[:,1],T1)';
-    print(W1)
-    # Quick pull out Ys
-    #=
-    for i in eachindex(flt_loc_y)
-        W1_y[i] = slip[W1[(i-1)*length(flt_loc_z) + 1]]
-    end
-    =#
-        for j = 2:N 
-            w1_y = interp1(T,slip[:,j],T1)';
-            W1 = [W1; w1_y]
-        end
-        if i == 1
-            plot(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
-        else
-            plot!(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
-        end
-
-        xlabel!("Cumulative Slip (m)")
-        ylabel!("Depth (km)")
-        png("./output/slip.png")
+    plot(time, θ)
+    xlabel!("time (yrs)")
+    ylabel!("θ")
+    title!("RS State vs Time at $(split(filename_prefix, "_")[2])")
+    png("$(filename_prefix)_state.png")
 end
+
+    
+
+    
 

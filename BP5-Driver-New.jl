@@ -146,16 +146,14 @@ function main()
 
     # set b for inital displacement calc
     bdry_vec_strip!(b, B, δ ./ 2, remote_boundary, params)
-    # print(b)
+   
     # Calculate initial displacement t = 0
     u = M \ b
 
     # Following vectors, τ, RSa, θ will only apply to Face 1, and are size 1x(NspxNrp)
     # initialize change in shear stress due to quasi-static deformation
    
-
     # Set friction coefficients for rate and state
-    fault_y = metrics.facecoord[2][1] 
     RS_params = RSht, RSl, RSlf, RSw, RSWf, RShs, RSH, RSamin, RSamax, RSDc, RSVinit
     grid_params = (xc[1]:dx:xc[2], yc[1]:dy:yc[2], zc[1]:dz:zc[2],
                     Nqp, Nrp, Nsp)
@@ -194,7 +192,7 @@ function main()
     # TODO move this to the .dat file
     Vi = 0.03
     τ_params = Vi, RSV0, RSVinit, σn, η, RSb, RSf0
-    set_prestress_QD!(τ0_vec, RS_params, grid_params, τ_params, Nθ, RS_indices)
+    # set_prestress_QD!(τ0_vec, RS_params, grid_params, τ_params, Nθ, RS_indices)
 
     # Set initial condition for index 1 DAE - this is a stacked vector of psi, followed by slip
     # Can ask brittany if this is ok but I think it should work
@@ -206,9 +204,9 @@ function main()
     # Set fault station locations (depths) specified in benchmark
     # TODO
     # I think these are all at x = 0
-    stations = [(-16.0, 0.0), (0.0, 0.0), (16.0, 0.0)] # km
+    stations = [(-16.0, 0.0), (0.0, 0.0), (16.0, 0.0), (-16.0, 20.0), (0.0, 20.0), (16.0, 20.0)] # km
     station_indices = find_station_index(stations, y, z)
-    station_strings = [ "025", "005", "075"] # # TODO fix these :/ 
+    station_strings = [ "10016", "00000", "00016", "20116", "20000", "20016"] # # TODO fix these :/ 
     # print(station_indices,"\n")
 
     # TODO Setup the fault location per BP outline
@@ -245,7 +243,7 @@ function main()
                 )
     # Set time span over which to solve:
     tspan = (0, sim_years * year_seconds)
-    # print(u)
+
     # Set up ODE problem corresponding to DAE
     prob = ODEProblem(odefun, ψδ, tspan, odeparam)
 
@@ -274,10 +272,6 @@ function main()
             internalnorm=(x, _)->norm(x, Inf), callback=cb_fun)        
     # (sol, z, pth)
 
-    # READ THIS PLZ
-    # I think we're good on the driver script.... now onto the ODE function
-
-    print("size of T1x_1: ", size([T[1] T[2] T[3]]), "\n")
 end
 
 main()
