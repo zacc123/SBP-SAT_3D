@@ -21,8 +21,8 @@ SBPp   = 2
 Lx1 = 0
 Lx2 = 80
 # y-domain is (Ly1, Ly2) (km)
-Ly1 = -40
-Ly2 = 40
+Ly1 = -80
+Ly2 = 80
 # z-domain is (Lz1, Lz2) (km)
 Lz1 = 0
 Lz2 = 80
@@ -34,9 +34,9 @@ Hz = 5
 #
 # number of grid points in each dimension 
 # make sure to resolve h* and l_b; should be written as integer.
-Nx = 10
-Ny = 10
-Nz = 10
+Nx = 16
+Ny = 16
+Nz = 16
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # #
@@ -64,22 +64,22 @@ RSV0 = 1e-6
 # reference friction coefficient
 RSf0 = 0.6
 # Width of shallow VS zone
-RShs = 4
+RShs = 2
 # Width of VW to VS zone
-RSht = 8
+RSht = 2
 # Width of VW region
-RSH = 30
+RSH = 12
 # length of uniform VW region
-RSl = 32
+RSl = 60
 # width of rate and state fault
-RSWf = 64
+RSWf = 40
 # length of rate and state fault
-RSlf = 64
+RSlf = 100
 # width of favorable nucleation zone
-w = 8
+w = 12
 # suggested cell cize (m)
 Δz = 1000
 # how many years to simulate
-sim_years = 1
+sim_years = 1800
 #
 #

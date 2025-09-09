@@ -14,11 +14,11 @@ using CUDA
 
 include("./BP5_ops.jl")
 include("./odefun_BP5.jl")
-include("../utils.jl") # get 3d metrics and ops
-include("../utils_3D.jl") # actual utils file
+include("./utils.jl") # get 3d metrics and ops
+include("./utils_3D.jl") # actual utils file
 
 # TODO: Remove this eventually
-global const localARGS = ["./bp5_3D.dat"]
+
 #b global const pth_glob = "./bp5_3D.dat"
 
 
@@ -252,17 +252,21 @@ function main()
     print(station_indices)
     print(RS_indices)
 
-    flt_loc = [y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]; z[RS_indices[2, 1]:stride_space:RS_indices[2, 2]]]
+    flt_loc_y = y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]
+    flt_loc_z = z[RS_indices[2, 1]:stride_space:RS_indices[2, 2]] 
+               
+    print(flt_loc_y)
+    print(flt_loc_z)
     flt_loc_indices = RS_indices
 
     
     # Set call-back function so that files are written to after successful time steps only.
-    cb_fun = SavingCallback((ψδ, t, i) -> write_to_file_BP5(pth, ψδ, t, i, y, z, flt_loc, flt_loc_indices,station_strings, station_indices, odeparam, "BP5_", 0.1 * year_seconds), SavedValues(Float64, Float64))
+    cb_fun = SavingCallback((ψδ, t, i) -> write_to_file_BP5(pth, ψδ, t, i, y, z, flt_loc_y, flt_loc_z, flt_loc_indices,station_strings, station_indices, odeparam, "BP5_", 0.1 * year_seconds), SavedValues(Float64, Float64))
 
     # Start here getting all this machinery working : ()
     # Make text files to store on-fault time series and slip data,
     # Also initialize with initial data:
-    create_text_files(pth, flt_loc, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, δ, τ0[1], θ, y, z)
+    create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, δ, τ0[1], θ, y, z)
     
     # Solve DAE using Tsit5()
     sol = solve(prob, Tsit5(); dt=0.2,

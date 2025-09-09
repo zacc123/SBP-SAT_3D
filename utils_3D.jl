@@ -13,23 +13,43 @@ using Interpolations
 
 
 
-# havent adjusted for 3d yet
-function create_text_files(pth, flt_loc, flt_loc_indices, stations, station_strings, station_indices, t, RSVinit, δ, τz0, θ, yf, zf)
+function interp1(xpt, ypt, x)
 
+  knots = (xpt,) 
+  itp = interpolate(knots, ypt, Gridded(Linear()))
+  #itp[x]  # endpoints of x must be between xpt[1] and xpt[end]
+end
+
+# havent adjusted for 3d yet
+# big Adjustment we'll write it like this 0 0 Ys
+                                        # 0 0 Zs
+function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, t, RSVinit, δ, τz0, θ, yf, zf)
+
+  
     path_to_slip = pth * "slip.dat"
     # slip.dat is a file that stores time, max(V) and slip at all the stations:
     open(path_to_slip, "w") do io
         write(io,"0.0 0.0 ")
-        for i in 1:length(flt_loc)
-            write(io,"$(flt_loc[i]) ")
+        for i in eachindex(flt_loc_y)
+            for j in eachindex(flt_loc_z)
+                write(io,"$(flt_loc_y[i]) ")
+            end
         end
             write(io,"\n")
+    
+        write(io,"0.0 0.0 ")
+        for i in eachindex(flt_loc_y)
+            for j in eachindex(flt_loc_z)
+                write(io,"$(flt_loc_z[j]) ")
+            end
         end
+            write(io,"\n")
+    end
     
     #write out initial data into devol.txt:
     y_indices = flt_loc_indices[1,1]:flt_loc_indices[1,2]
     z_indices = flt_loc_indices[2,1]:flt_loc_indices[2,2]
-    Nzp_virtual = length(flt_loc[2, :])
+    Nzp_virtual = length(flt_loc_z)
 
     Nyp = length(yf)
     Nzp = length(zf)
@@ -37,14 +57,14 @@ function create_text_files(pth, flt_loc, flt_loc_indices, stations, station_stri
     ny_fault = length(y_indices)
     nz_fault = length(z_indices)
 
-    vv = Array{Float64}(undef, 1, 2+ 2*(ny_fault * nz_fault))
+    vv = Array{Float64}(undef, 1, 2+ 1*(ny_fault * nz_fault))
         vv[1] = t
         vv[2] = log10(RSVinit)
 
         y_offset = flt_loc_indices[1, 1]
         z_offset = flt_loc_indices[2, 1]
-        for i in eachindex(flt_loc[1, :])
-            for j in eachindex(flt_loc[2, :])
+        for i in eachindex(flt_loc_y)
+            for j in eachindex(flt_loc_z)
                 virtual_idx = 2 + (i - 1) * Nzp_virtual + j
                 real_idx =  2 + (i + y_offset - 1) * Nzp + j + z_offset
                 vv[virtual_idx] = δ[real_idx]
@@ -83,7 +103,7 @@ function create_text_files(pth, flt_loc, flt_loc_indices, stations, station_stri
         write(io, "# element size=xx m\n")
         write(io, "# location=on fault, z = "*string(parse(Int64, station_strings[n])/10)*" km\n")
         write(io, "# Lz = 80 km\n")
-        write(io, "t slip slip_rate shear_stress state\n")
+        write(io, "t slip_y slip_z slip_rate_y slip_rate_z shear_stress state\n")
 
         writedlm(io, ww)
     end
@@ -92,14 +112,14 @@ function create_text_files(pth, flt_loc, flt_loc_indices, stations, station_stri
 end
 
 # havent adjusted for 3d yet
-function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc, flt_loc_indices, station_strings, station_indices, p, base_name="", tdump=100)
+function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc_y, flt_loc_z, flt_loc_indices, station_strings, station_indices, p, base_name="", tdump=100)
   
   path_to_slip = pth * "slip.dat"
   Vmax = 0.0
 
   # All of this is to get the right indices to work out agh
     Nyp = length(yf)
-    Nzp_virtual = length(flt_loc[2, :])
+    Nzp_virtual = length(flt_loc_z)
     Nzp = length(zf)
 
     N = Nyp * Nzp
@@ -121,9 +141,9 @@ function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc, flt_loc_indices, st
     
 
     if mod(ctr[], p.save_stride_fields) == 0 || t == (p.sim_years ./ 31556926)
-      vv = Array{Float64}(undef, 1, 2+(length(flt_loc[1, :]) * length(flt_loc[2, :])))
+      vv = Array{Float64}(undef, 1, 2+(length(flt_loc_y) * length(flt_loc_z)))
       vv[1] = t
-      vv[2] = log10(Vmax)
+      vv[2] = (Vmax)
 
       # a bit tricky in 3d
       # Might regret this but lets store these indices as 1, 2 -> t, log10(vmax), 
@@ -131,11 +151,12 @@ function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc, flt_loc_indices, st
       #
         y_offset = flt_loc_indices[1, 1]
         z_offset = flt_loc_indices[2, 1]
-        for i in eachindex(flt_loc[1, :])
-            for j in eachindex(flt_loc[2, :])
+        for i in eachindex(flt_loc_y)
+            for j in eachindex(flt_loc_z)
                 virtual_idx = 2 + (i - 1) * Nzp_virtual + j
                 real_idx =  2 + (i + y_offset - 1) * Nzp + j + z_offset
                 vv[virtual_idx] = δ[real_idx]
+                # vv[virtual_idx + 1] = δ[real_idx]
             end
         end
 
@@ -175,3 +196,195 @@ function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc, flt_loc_indices, st
 
   Vmax
 end
+
+# find_ind() differentiates b/t phases by defining
+# interseismic when max slip rate < 10^-3 m/s
+# mv is maximum slip rate (log10 m/s) 
+function find_ind(mv)
+  ind = [1]
+  int = 1
+  cos = 0
+  for i = 2:length(mv)
+    if mv[i] > -3 && int == 1 && cos == 0
+      append!(ind, i);
+      int = 0;
+      cos = 1;
+    end
+  
+    if mv[i] < -3 && int == 0 && cos == 1
+      append!(ind, i-1)
+      int = 1
+      cos = 0
+    end
+  end
+
+
+  ind = append!(ind, length(mv));  #tack on for plotting any part of an incomplete coseismic/interseismic phase
+  
+  return ind
+end
+
+
+# plot_slip will plot slip contours from devol.txt - every 5 years in blue during interseismic, 
+# every 1 second in red during coseismic
+function plot_slip_3D(filename)
+
+    grid = readdlm(filename, Float64)
+    sz = size(grid)
+    flt_loc_y = grid[1,3:end]
+    flt_loc_z = grid[2,3:end]
+    T = grid[3:sz[1],1]
+    maxV = grid[3:end, 2]
+    slip = grid[3:sz[1], 3:sz[2]]
+    N = size(slip)[2]
+
+
+    ind = find_ind(maxV);        #finds indices for inter/co-seismic phases
+    interval = [5*31556926 1]   #plot every 5 years and every 1 second
+    
+    ct = 0   #this counts the number of events
+
+
+    #Assumes an initial interseismic period
+    #This for-loop only plots completed phases
+    for i = 1:2:length(ind)-2
+        
+        T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
+
+        W1 = interp1(T,slip[:,1],T1)';
+        
+        for j = 2:N 
+        w1 = interp1(T,slip[:,j],T1)';
+        W1 = [W1; w1]
+        end
+
+        if i == 1
+        plot(W1, -flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        else
+        plot!(W1, -flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        end
+
+    
+        T1 = T[ind[i+1]]:interval[2]:T[ind[i+2]];
+
+
+        W1 = interp1(T,slip[:,1],T1)';
+        for j = 2:N 
+        w1 = interp1(T,slip[:,j],T1)';
+        W1 = [W1; w1]
+        end
+
+        plot!(W1, -flt_loc_y, linecolor = :red, legend = false) #interseismic phase
+
+        ct = ct+1;
+    end
+
+    
+    # plot remainder of an incomplete interseismic period:
+    i = length(ind)-1;
+    T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
+    W1 = interp1(T,slip[:,1],T1)';
+    print(W1)
+    # Quick pull out Ys
+    #=
+    for i in eachindex(flt_loc_y)
+        W1_y[i] = slip[W1[(i-1)*length(flt_loc_z) + 1]]
+    end
+    =#
+        for j = 2:N 
+            w1_y = interp1(T,slip[:,j],T1)';
+            W1 = [W1; w1_y]
+        end
+        if i == 1
+            plot(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        else
+            plot!(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        end
+
+        xlabel!("Cumulative Slip (m)")
+        ylabel!("Fault Position (Y) (km)")
+        title!("Slip at Depth z = 0km")
+        png("./output/slip.png")
+end
+
+# plot_slip will plot slip contours from devol.txt - every 5 years in blue during interseismic, 
+# every 1 second in red during coseismic
+function plot_traction_3D(filename)
+
+    grid = readdlm(filename, Float64)
+    sz = size(grid)
+    flt_loc_y = grid[1,3:end]
+    flt_loc_z = grid[2,3:end]
+    T = grid[3:sz[1],1]
+    maxV = grid[3:end, 2]
+    slip = grid[3:sz[1], 3:sz[2]]
+    N = size(slip)[2]
+
+
+    ind = find_ind(maxV);        #finds indices for inter/co-seismic phases
+    interval = [5*31556926 1]   #plot every 5 years and every 1 second
+    
+    ct = 0   #this counts the number of events
+
+
+    #Assumes an initial interseismic period
+    #This for-loop only plots completed phases
+    for i = 1:2:length(ind)-2
+        
+        T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
+
+        W1 = interp1(T,slip[:,1],T1)';
+        
+        for j = 2:N 
+        w1 = interp1(T,slip[:,j],T1)';
+        W1 = [W1; w1]
+        end
+
+        if i == 1
+        plot(W1, -flt_loc, linecolor = :blue, legend = false) #interseismic phase
+        else
+        plot!(W1, -flt_loc, linecolor = :blue, legend = false) #interseismic phase
+        end
+
+    
+        T1 = T[ind[i+1]]:interval[2]:T[ind[i+2]];
+
+
+        W1 = interp1(T,slip[:,1],T1)';
+        for j = 2:N 
+        w1 = interp1(T,slip[:,j],T1)';
+        W1 = [W1; w1]
+        end
+
+        plot!(W1, -flt_loc, linecolor = :red, legend = false) #interseismic phase
+
+        ct = ct+1;
+    end
+
+    
+    # plot remainder of an incomplete interseismic period:
+    i = length(ind)-1;
+    T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
+    W1 = interp1(T,slip[:,1],T1)';
+    print(W1)
+    # Quick pull out Ys
+    #=
+    for i in eachindex(flt_loc_y)
+        W1_y[i] = slip[W1[(i-1)*length(flt_loc_z) + 1]]
+    end
+    =#
+        for j = 2:N 
+            w1_y = interp1(T,slip[:,j],T1)';
+            W1 = [W1; w1_y]
+        end
+        if i == 1
+            plot(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        else
+            plot!(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        end
+
+        xlabel!("Cumulative Slip (m)")
+        ylabel!("Depth (km)")
+        png("./output/slip.png")
+end
+

@@ -47,6 +47,8 @@ function odefun(dψV, ψδ, p, t)
     ψ  = @view ψδ[(1:Nθ)]
     δ  = ψδ[Nθ .+ (1:2*Nrp*Nsp)]
 
+    b .= 0
+
     params = (Nqp, Nrp, Nsp)
     remote_boundary = (Vp .* t ./ 2) .* ones(3 * Nqp * Nrp * Nsp) # Slow creep at face 2 
 
@@ -73,10 +75,11 @@ function odefun(dψV, ψδ, p, t)
     τf[1:Nθ] .= Δτ_2 .+ τ0[1:Nθ]# restrict to only the RS zone
     τf[1+Nθ:2*Nθ] .= Δτ_3 .+ τ0[1+Nθ:2*Nθ]
     
-   
+    print(Δτ_tmp[1:3], "\n")
 
     # break into comp for easier reading
     τf_2 = τf[1:Nθ]
+    print(τf_2[1:3])
     τf_3 = τf[1+Nθ:2*Nθ]
 
     V_v = hypot.(V2, V3)
@@ -97,7 +100,7 @@ function odefun(dψV, ψδ, p, t)
     # end of bisection guarded newton's method
 
     # calculating V2_v and V3_v from V_v
-    V_v .= V_v_tmp
+    V_v .= V_v_tmp[:]
     V2 .= V_v .* τf_2 ./ τ_magnitudes
     V3 .= V_v .* τf_3 ./ τ_magnitudes
     # end of calculating V2_v and V3_v from V_v
@@ -121,17 +124,19 @@ function odefun(dψV, ψδ, p, t)
         @show iter
     end
 
-    # Here!
-
     # Set Vs
     # Remember that V is [Vy, Vz] since Vx = 0
     V[1:Nrp * Nsp] .= Vp # set all of the region to Vp to start for V2
     V[Nrp * Nsp + 1: end] .= 0  # Set all v3 to 0
 
     V_updates = (V2, V3)
+    
     # Now updated Velocity:
     update_V_RS_zone!(V, V_updates, RS_params, grid_params, Nθ, RS_indices)
+    print("\nDEBUG: V2 max:", maximum(abs.(extrema(V2))))
+    print("\nDEBUG: V3 max:", maximum(abs.(extrema(V3))))
 
+    
     # Updating ψ based on iteration convergence
     # dψ[n] = (RSb * RSV0 / RSDc) * (exp((RSf0 - ψn) / RSb) - abs(Vn) / RSV0) # BP1
     # dψ .= (RSb * RSV0 / RSL) .* (exp.((RSf0 .- ψ) ./ RSb) .- sqrt.(V2_v.^2 .+ V3_v.^2) ./ RSV0)
@@ -140,6 +145,8 @@ function odefun(dψV, ψδ, p, t)
     else
         dψ .= 0
     end
+
+    
 
   nothing
 end
