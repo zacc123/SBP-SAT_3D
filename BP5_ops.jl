@@ -410,7 +410,6 @@ function newtbndv_vectorized(rateandstate_vectorized, xL, xR, V_v, ψ, σn, τ_v
     end
 
     f_v, df_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)
-    #print("\nDEBUG: Type of df_v", df_v)
     dxlr_v = xR .- xL
 
     for iter = 1:maxiter

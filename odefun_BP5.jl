@@ -47,9 +47,10 @@ function odefun(dψV, ψδ, p, t)
     ψ  = @view ψδ[(1:Nθ)]
     δ  = ψδ[Nθ .+ (1:2*Nrp*Nsp)]
 
-    b .= 0
+    b .= 0 # reset the boundary conditions
 
-    params = (Nqp, Nrp, Nsp)
+    params = (Nqp, Nrp, Nsp) # to send into different helpers
+
     remote_boundary = (Vp .* t ./ 2) .* ones(3 * Nqp * Nrp * Nsp) # Slow creep at face 2 
 
     bdry_vec_strip!(b, B, δ ./ 2, remote_boundary, params)
@@ -59,31 +60,30 @@ function odefun(dψV, ψδ, p, t)
 
     # set up rates of change for  state and slip
     dψ  = @view dψV[(1:Nθ)]
-    V  = dψV[Nθ .+ (1:2*Nrp*Nsp)]
+    V  = @view dψV[Nθ .+ (1:2*Nrp*Nsp)]
 
     dψ .= 0 # initialize values to 0
     V  .= 0 # initialize values to 0
 
     # Update the fault data
     Δτ .= 0
-    lf1 = 1  # fault is at face 1
 
     # Start here
     Δτ_tmp = computetraction_stripped(T, u, e, sJ) # calc Traction on whole face
     Δτ_2, Δτ_3, V2, V3 = update_tau_v_vec(Δτ_tmp, V, RS_params, grid_params, Nθ, RS_indices)
     
-    τf[1:Nθ] .= Δτ_2 .+ τ0[1:Nθ]# restrict to only the RS zone
-    τf[1+Nθ:2*Nθ] .= Δτ_3 .+ τ0[1+Nθ:2*Nθ]
-    
-    print(Δτ_tmp[1:3], "\n")
+    # Sanity Check, make sure delta tau is set correctly
+    Δτ[1:Nθ] .=  Δτ_2[:]
+    Δτ[1+Nθ:end] .=  Δτ_3[:]
+
+    τf .= Δτ .+ τ0 # Set final stress on RS fault
 
     # break into comp for easier reading
     τf_2 = τf[1:Nθ]
-    print(τf_2[1:3])
     τf_3 = τf[1+Nθ:2*Nθ]
 
+    # This is just a 0 vector lol
     V_v = hypot.(V2, V3)
-
     τ_magnitudes = hypot.(τf_2, τf_3) # get these for newton method
 
     # Newton Bndry method

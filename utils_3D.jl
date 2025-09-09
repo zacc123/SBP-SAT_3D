@@ -259,9 +259,9 @@ function plot_slip_3D(filename)
         end
 
         if i == 1
-        plot(W1, -flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        plot(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
         else
-        plot!(W1, -flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
+        plot!(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
         end
 
     
@@ -274,7 +274,7 @@ function plot_slip_3D(filename)
         W1 = [W1; w1]
         end
 
-        plot!(W1, -flt_loc_y, linecolor = :red, legend = false) #interseismic phase
+        plot!(W1, flt_loc_y, linecolor = :red, legend = false) #interseismic phase
 
         ct = ct+1;
     end
