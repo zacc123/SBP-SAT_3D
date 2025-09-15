@@ -220,6 +220,10 @@ function set_theta(RS_params, grid_params)
         end
     end
 
+    if ny_end == 0
+        ny_end = length(y_grid)
+    end
+
     # get z nodes
     for i in eachindex(z_grid)
         if z_grid[i] > Wf
@@ -228,6 +232,16 @@ function set_theta(RS_params, grid_params)
         end
     end
 
+    if ny_end == 0
+        ny_end = length(y_grid)
+    end
+
+    # Account for case where it all is in there
+    if nz_end == 0
+        nz_end = length(z_grid)
+    end
+
+    # print("\nDEBUG $(ny_start):$(ny_end), 1:$(nz_end)")
     # initialize theta
     θ = RSDc ./ RSVinit .* ones((nz_end) * (ny_end - ny_start + 1))
     

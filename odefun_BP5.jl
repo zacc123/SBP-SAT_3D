@@ -34,9 +34,14 @@ function odefun(dψV, ψδ, p, t)
     RS_params = p.RS_params
     RS_indices = p.RS_indices
     B = p.B
+    t_prv = p.t_prv
     
     current_time = t ./ 31556926
-    print("TIME [YRS] = $(current_time).\n")
+
+    if current_time >= t_prv[1] + 10
+        print("TIME [YRS] = $(current_time).\n")
+        p.t_prv[1] = current_time
+    end
 
     Nqp = length(x)
     Nrp = length(y)
@@ -120,10 +125,11 @@ function odefun(dψV, ψδ, p, t)
     end
     # end of rejecting from V2, V3, or iter
 
+    #=
     if iter > 1
         @show iter
     end
-
+    =#
     # Set Vs
     # Remember that V is [Vy, Vz] since Vx = 0
     V[1:Nrp * Nsp] .= Vp # set all of the region to Vp to start for V2
@@ -133,8 +139,8 @@ function odefun(dψV, ψδ, p, t)
     
     # Now updated Velocity:
     update_V_RS_zone!(V, V_updates, RS_params, grid_params, Nθ, RS_indices)
-    print("\nDEBUG: V2 max:", maximum(abs.(extrema(V2))))
-    print("\nDEBUG: V3 max:", maximum(abs.(extrema(V3))))
+    # print("\nDEBUG: V2 max:", maximum(abs.(extrema(V2))))
+    # print("\nDEBUG: V3 max:", maximum(abs.(extrema(V3))))
 
     
     # Updating ψ based on iteration convergence

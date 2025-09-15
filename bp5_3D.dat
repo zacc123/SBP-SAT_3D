@@ -19,13 +19,13 @@ SBPp   = 2
 # computational domain size
 # x-domain is (Lx1, Lx2) (km)
 Lx1 = 0
-Lx2 = 80
+Lx2 = 40
 # y-domain is (Ly1, Ly2) (km)
-Ly1 = -80
-Ly2 = 80
+Ly1 = -20
+Ly2 =  20
 # z-domain is (Lz1, Lz2) (km)
 Lz1 = 0
-Lz2 = 80
+Lz2 = 40
 #
 # dimensions in which constant grid-spacing is applied:
 Hx = 5
@@ -34,9 +34,9 @@ Hz = 5
 #
 # number of grid points in each dimension 
 # make sure to resolve h* and l_b; should be written as integer.
-Nx = 16
-Ny = 16
-Nz = 16
+Nx = 20
+Ny = 20
+Nz = 20
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # #

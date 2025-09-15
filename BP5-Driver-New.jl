@@ -56,8 +56,8 @@ function main()
 
     # parameter house keeping and setting up the problem domain
     year_seconds = 31556926
-    μ = cs^2 * ρ 
-    μshear = cs^2 * ρ
+    μ = cs^2 / ρ 
+    μshear = cs^2 / ρ
     η = μshear / (2 * cs)
 
     ################################## COORDINATE TRANSFORM ###################################
@@ -166,6 +166,7 @@ function main()
     # Update friction coefficients based on RS zone
     RSa = initialize_friction_params_vec(RS_params, grid_params, Nθ, RS_indices)
     
+    print("\nRSa", RSa, "\n")
     # Set pre-stress according to benchmark
 
     # A bit tricky, τ has y and z comp.  scalar pres stress initialized according to BP5 eq 22
@@ -186,28 +187,28 @@ function main()
     # Quick sanity checks
     @assert length(τ0) == length(RSa)
     @assert length(τ0) ==  (RS_indices[1, 2] - RS_indices[1, 1] + 1) * (RS_indices[2, 2] - RS_indices[2, 1] + 1)
-   
+    print(τ0)
    
     # For QD Setup, reset tau0 in nucleation zone
     # TODO move this to the .dat file
     Vi = 0.03
     τ_params = Vi, RSV0, RSVinit, σn, η, RSb, RSf0
-    # set_prestress_QD!(τ0_vec, RS_params, grid_params, τ_params, Nθ, RS_indices)
+    set_prestress_QD!(τ0_vec, RS_params, grid_params, τ_params, Nθ, RS_indices)
 
     # Set initial condition for index 1 DAE - this is a stacked vector of psi, followed by slip
     # Can ask brittany if this is ok but I think it should work
     # TODO
     ψδ = zeros(Nθ + (2* Nrp * Nsp))  #because length(ψ) = 1 * Nrp * Nsp,  length(δ) = 2 * Nrp * Nsp 
-    ψδ[1:Nθ] .= ψ
-    ψδ[Nθ+1:end] .= δ
+    ψδ[1:Nθ] .= ψ[:]
+    ψδ[Nθ+1:end] .= δ[:]
 
     # Set fault station locations (depths) specified in benchmark
     # TODO
     # I think these are all at x = 0
-    stations = [(-16.0, 0.0), (0.0, 0.0), (16.0, 0.0), (-16.0, 20.0), (0.0, 20.0), (16.0, 20.0)] # km
+    stations = [(-5.0, 0.0), (-5.0, 5.0), (0.0, 0.0), (0.0, 5.0), (5.0, 0.0), (5.0, 5.0)] # km
     station_indices = find_station_index(stations, y, z)
-    station_strings = [ "10016", "00000", "00016", "20116", "20000", "20016"] # # TODO fix these :/ 
-    # print(station_indices,"\n")
+    station_strings = [ "-1050", "-1055", "1000", "1005", "1050", "1055"] # # TODO fix these :/ 
+    
 
     # TODO Setup the fault location per BP outline
 
@@ -239,7 +240,8 @@ function main()
                 sJ = metrics.sJ,
                 save_stride_fields = stride_time, # save every save_stride_fields time steps
                 RS_params = RS_params,
-                RS_indices = RS_indices
+                RS_indices = RS_indices,
+                t_prv = [0.0]
                 )
     # Set time span over which to solve:
     tspan = (0, sim_years * year_seconds)
@@ -247,16 +249,15 @@ function main()
     # Set up ODE problem corresponding to DAE
     prob = ODEProblem(odefun, ψδ, tspan, odeparam)
 
-    print(station_indices)
-    print(RS_indices)
+    print("\nStation Indices", station_indices)
+    print("\nRS indices", RS_indices)
 
     flt_loc_y = y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]
     flt_loc_z = z[RS_indices[2, 1]:stride_space:RS_indices[2, 2]] 
                
-    print(flt_loc_y)
-    print(flt_loc_z)
+    print("\nY flt", flt_loc_y)
+    print("\nZ flt", flt_loc_z)
     flt_loc_indices = RS_indices
-
     
     # Set call-back function so that files are written to after successful time steps only.
     cb_fun = SavingCallback((ψδ, t, i) -> write_to_file_BP5(pth, ψδ, t, i, y, z, flt_loc_y, flt_loc_z, flt_loc_indices,station_strings, station_indices, odeparam, "BP5_", 0.1 * year_seconds), SavedValues(Float64, Float64))
@@ -272,6 +273,12 @@ function main()
             internalnorm=(x, _)->norm(x, Inf), callback=cb_fun)        
     # (sol, z, pth)
 
+    # For plotting
+
+    for idx in eachindex(stations)
+        filename = "./output/fltst_strk$(station_strings[idx]).txt"
+        plot_traction_3D(filename)
+    end
 end
 
 main()
