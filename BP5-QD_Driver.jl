@@ -18,9 +18,12 @@ include("./utils.jl") # get 3d metrics and ops
 
 const global localARGS = ["./BP5.dat"]
 
-
 function main()
 
+    # my own exp var
+
+    cg_flag = true
+    gpu_flag = false
 
     # Read in params from DAT file for problem
     (pth, stride_space, stride_time, SBPp,
@@ -123,10 +126,6 @@ function main()
     @time (M, B, JH, A, S, HqI, HrI, HsI, T, e) = locoperator(SBPp, Nq, Nr, Ns, metrics, metrics.C) # TODO: extraneaous C from metrics in there
     print("\nCreating Operators Done\n") 
 
-    print("\nGetting LU Factorization of M\n")
-    # @time M = lu(M) # matrix factorization
-    print("\nLU Factorization of M done\n")
-
      # initialize time and vector b that stores boundary data (linear system will be Au = b, where b = B*g)
     t = 0
     b = zeros(3 * Nqp * Nrp * Nsp) # this sucker is bigggggg 
@@ -144,8 +143,27 @@ function main()
     # set b for inital displacement calc
     bdry_vec_strip!(b, B, δ ./ 2, remote_boundary, params)
    
-    # Calculate initial displacement t = 0
-    u = M \ b
+    # if doing backslash, do this up front
+    if !cg_flag
+        print("\nCG flag set to False, running with Backslash")
+        print("\nGetting LU Factorization of M\n")
+        @time M = lu(M)
+        print("\nLU Factorization of M done\n")
+        # Calculate initial displacement t = 0
+        print("\nTime for 1st solve:")
+        @time u = M \ b
+    end
+
+    if  cg_flag
+        print("\nCG flag set to True, running with CG")
+        
+        u = zeros(size(b)) # need to initialize u
+
+        print("\nTime for 1st solve:")
+        @time cg!(u, M, b)
+    end
+
+   
 
     # Following vectors, τ, RSa, θ will only apply to Face 1, and are size 1x(NspxNrp)
     # initialize change in shear stress due to quasi-static deformation
@@ -162,13 +180,10 @@ function main()
 
     # Update friction coefficients based on RS zone
     RSa = initialize_friction_params_vec(RS_params, grid_params, Nθ, RS_indices)
-    
-    print("\nRSa", RSa, "\n")
     # Set pre-stress according to benchmark
 
     # A bit tricky, τ has y and z comp.  scalar pres stress initialized according to BP5 eq 22
     τ0 = σn .* RSa .* asinh.((RSVinit / (2 * RSV0)) .* exp.((RSf0 + RSb * log.(RSV0 / RSVinit)) ./ RSa)) .+ (η * RSVinit)
-    
     
     Δτ_vec = zeros(2 * length(τ0)) # this will be how stresses change through sim
     τ0_vec = zeros(length(Δτ_vec))
@@ -180,12 +195,10 @@ function main()
     τ0_vec[1:Nθ] .= (τ0 .* V[1] ./ V_mag) # set y and z comps
     τ0_vec[1+Nθ:2*Nθ] .= (τ0 .* V[2] ./ V_mag)
 
-
     # Quick sanity checks
     @assert length(τ0) == length(RSa)
     @assert length(τ0) ==  (RS_indices[1, 2] - RS_indices[1, 1] + 1) * (RS_indices[2, 2] - RS_indices[2, 1] + 1)
-    print(τ0)
-   
+
     # For QD Setup, reset tau0 in nucleation zone
     # TODO move this to the .dat file
     Vi = 0.03
@@ -199,16 +212,11 @@ function main()
     ψδ[1:Nθ] .= ψ[:]
     ψδ[Nθ+1:end] .= δ[:]
 
-    # Set fault station locations (depths) specified in benchmark
-    # TODO
-    # I think these are all at x = 0
+    # Set up stations on fault using Y, Z indices
     stations = [(-5.0, 0.0), (-5.0, 5.0), (0.0, 0.0), (0.0, 5.0), (5.0, 0.0), (5.0, 5.0)] # km
     station_indices = find_station_index(stations, y, z)
     station_strings = [ "-1050", "-1055", "1000", "1005", "1050", "1055"] # # TODO fix these :/ 
     
-
-    # TODO Setup the fault location per BP outline
-
     # set up parameters sent to the right hand side of the DAE:
     odeparam = (reject_step = [false], 
                 sim_years =  sim_years,
@@ -244,16 +252,17 @@ function main()
     tspan = (0, sim_years * year_seconds)
 
     # Set up ODE problem corresponding to DAE
-    prob = ODEProblem(odefun, ψδ, tspan, odeparam)
-
-    print("\nStation Indices", station_indices)
-    print("\nRS indices", RS_indices)
+    if cg_flag && gpu_flag
+        prob = ODEProblem(odefun_cg_gpu, ψδ, tspan, odeparam)
+    elseif cg_flag
+        prob = ODEProblem(odefun_cg, ψδ, tspan, odeparam)
+    else
+        prob = ODEProblem(odefun, ψδ, tspan, odeparam)
+    end
 
     flt_loc_y = y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]
     flt_loc_z = z[RS_indices[2, 1]:stride_space:RS_indices[2, 2]] 
                
-    print("\nY flt", flt_loc_y)
-    print("\nZ flt", flt_loc_z)
     flt_loc_indices = RS_indices
     
     # Set call-back function so that files are written to after successful time steps only.
@@ -265,7 +274,7 @@ function main()
     create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, δ, τ0[1], θ, y, z)
     
     # Solve DAE using Tsit5()
-    sol = solve(prob, Tsit5(); dt=0.2,
+    @time sol = solve(prob, Tsit5(); dt=0.2,
             abstol = 1e-5, reltol = 1e-5, save_everystep=true, gamma = 0.2,
             internalnorm=(x, _)->norm(x, Inf), callback=cb_fun)        
     # (sol, z, pth)
