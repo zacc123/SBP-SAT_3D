@@ -987,400 +987,567 @@ function bdry_vec_strip!(g, B, slip_data, remote_data, params)
 
 end
 
-# FIX ME just copy and pasted from BP1 QD structured
+#=
+Helper functions for use in BP5 Benchmarks
+=#
+
+# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
+# 
+#
+# Domain and Operator Helpers
+#
+#
+# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
+
+# U is stacked so U = [U1; U2; U3], U1 = [U_111, U_112, U_113, U_121, U_122, ....] for U_xyz
+
+# Start with the Basics, pull out a given constant slice
+
 """
-This will be fun... haha kill me.... ( :
-
-So ok we need to go and grab the correct terms for the face,
-    Compute the traction,
-
-    We leave the actual pulling out to a separate function in ops
+Helper function to grab a scalar value at position [x, y, z] for U_dir
+    Inputs:
+        u: stacked vector in x and y and z
+        index: tuple (x_in, y_in, z_in, dir)
+        num_vals: (Nx, Ny, Nz)
+    Output:
+        Num 
 """
-function computetraction_stripped(T, u, e, sJ)
-
-    # Step 1, get the correct Traction terms for face 1
-    #[ σyx; σzx]
-    # (T11_1 .- Z11_1)'*e1*sJ1*H1*e1T
-    e1, e1T = e[1]
-    N, _ = size(e1) # face 1 restriction operator
-    (T11_1, T12_1, T13_1, 
-     T21_1, T22_1, T23_1, 
-     T31_1, T32_1, T33_1)  = T
-    # τ_y should be the y res of the traction == some mixed derivative and
-    # setting x traction to 0 to avoid tearing on fault 
-
-    # Do this stacking to just multply T by u, ie σyy = T21_1 u1 .+ T22_1 u2 .+ T23_1 us
-    T_2x = [T21_1 T22_1 T23_1]
-    T_3x = [T31_1 T32_1 T33_1]
-
-    τ_y_full = (-e1T * (T_2x * u)) # ./ sJ[1][:]
-    τ_z_full = (-e1T * (T_3x * u)) # ./ sJ[1][:]
+function get_value(u, indexes, num_vals)
+    # Unpack indices
+    x, y, z, comp = indexes
    
-    return [τ_y_full τ_z_full]
-  
+    Nx, Ny, Nz = num_vals
+
+    # Calc Index
+    N = Nx * Ny * Nz
+    index = ((comp - 1) * N) + ((x - 1) * (Ny * Nz)) + ((y - 1) * (Nz)) + z
+
+    return u[index]
 end
 
-function interp1(xpt, ypt, x)
+"""
+LOL Im re inventing view 
+Helper function to grab a vector value at position [x, y, z] for U_dir
+    Inputs:
+        u: stacked vector in x and y and z
+        index: tuple (x_in, y_in, z_in, dir)
+            1 set on indices will be a range i.e 1:N
+        num_vals: (Nx, Ny, Nz)
+    Output:
+        Num 
+"""
 
-  knots = (xpt,) 
-  itp = interpolate(knots, ypt, Gridded(Linear()))
-  #itp[x]  # endpoints of x must be between xpt[1] and xpt[end]
-end
-
-# havent adjusted for 3d yet
-# big Adjustment we'll write it like this 0 0 Ys
-                                        # 0 0 Zs
-function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, t, RSVinit, δ, τz0, θ, yf, zf)
-
-  
-    path_to_slip = pth * "slip.dat"
-    # slip.dat is a file that stores time, max(V) and slip at all the stations:
-    open(path_to_slip, "w") do io
-        write(io,"0.0 0.0 ")
-        for i in eachindex(flt_loc_y)
-            for j in eachindex(flt_loc_z)
-                write(io,"$(flt_loc_y[i]) ")
-            end
-        end
-            write(io,"\n")
+function get_vector(u, indexes, num_vals)
     
-        write(io,"0.0 0.0 ")
-        for i in eachindex(flt_loc_y)
-            for j in eachindex(flt_loc_z)
-                write(io,"$(flt_loc_z[j]) ")
+    x, y, z, comp = indexes
+    Nx, Ny, Nz = num_vals
+    
+    # Calc Index
+    N = Nx .* Ny .* Nz
+    index = ((comp .- 1) .* N) .+ ((x .- 1) .* (Ny .* Nz)) .+ ((y .- 1) .* (Nz)) .+ z
+
+    return u[index]
+end
+
+# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
+# 
+#
+# Friction and Fault Helpers
+#
+#
+# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
+
+
+
+
+"""
+Helper function to get the rate a state parameter correct
+"""
+function RS_r(y, z, hs, ht, H, l)
+    return max(abs(z - hs - ht - H/2) - H/2, abs(y) - l/2) / ht 
+end
+
+"""
+Function to set the rate and state parameter for the fault face in BP5
+"""
+function initialize_friction_params_mat(RS_params, grid_params, Nθ, indices)
+
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
+
+    # Setup result matrix where values with be a_min, a_max, or r of a
+    rows = indices[1, 2] - indices[1, 1] + 1
+    cols = indices[2, 2] - indices[2, 1] + 1
+    res = zeros(rows, cols)
+    Nzp = length(z_grid)
+
+    for row in 1:rows
+
+        for col in 1:cols
+
+            # adjust the indices for the actual coefficient calc, kill myself
+            y_idx = row + indices[1, 1] - 1
+            z_idx = col + indices[2, 1] - 1
+
+            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
+                # Non RS zone
+                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
+               res[row, col] = 0.0
+
+            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
+                
+                if (z_grid[z_idx] <= hs) || (z_grid[z_idx] >= hs + H + 2*ht) || (abs(y_grid[y_idx]) >= l/2 + ht)
+                    # Get entire VS region
+                    res[row, col] = a_max
+                elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (abs(y_grid[y_idx]) < l/2)
+                    # VW and NZ
+                    res[row, col] = a_min
+                else
+                    # Transition Region
+                    res[row, col] = (RS_r(y_grid[y_idx], z_grid[z_idx], hs, ht, H, l) * (a_max - a_min)) + a_min
+
+                end
+            else
+                print("Error in VS Index setup")
             end
         end
-            write(io,"\n")
     end
-    
-    #write out initial data into devol.txt:
-    y_indices = flt_loc_indices[1,1]:flt_loc_indices[1,2]
-    z_indices = flt_loc_indices[2,1]:flt_loc_indices[2,2]
-    Nzp_virtual = length(flt_loc_z)
 
-    Nyp = length(yf)
-    Nzp = length(zf)
-
-    ny_fault = length(y_indices)
-    nz_fault = length(z_indices)
-
-    vv = Array{Float64}(undef, 1, 2+ 1*(ny_fault * nz_fault))
-        vv[1] = t
-        vv[2] = log10(RSVinit)
-
-        y_offset = flt_loc_indices[1, 1]
-        z_offset = flt_loc_indices[2, 1]
-        for i in eachindex(flt_loc_y)
-            for j in eachindex(flt_loc_z)
-                virtual_idx = 2 + (i - 1) * Nzp_virtual + j
-                real_idx =  2 + (i + y_offset - 1) * Nzp + j + z_offset
-                vv[virtual_idx] = δ[real_idx]
-            end
-        end
-     
-        open(path_to_slip, "a") do io
-            writedlm(io, vv)
-        end
-
-  # write out initial data into station files:
-
-  # fltst_dpXXX.txt is a file that stores time and time-series of slip, log10(slip_rate), 
-  # shear_stress and log10(state) at depth of z = XXX km, where XXX is each of the fault station depths.
-  # First we write out initial data into each fltst_dpXXX.txt:
-
-  for n = 1:length(station_strings)
-        y_idx = station_indices[n, 1]
-        z_idx = station_indices[n, 2]
-        real_idx = (y_idx - 1) * Nzp + z_idx
-        virtual_idx = (y_idx - 1 - y_offset) * Nzp_virtual + z_idx - z_offset
-
-        XXX = pth * "fltst_strk"*station_strings[n]*".txt"
-        ww = Array{Float64}(undef, 1, 8)
-        ww[1] = t
-        ww[2] = δ[real_idx] #slip y
-        ww[3] = δ[real_idx + (Nzp * Nyp)] # slip z
-        ww[4] = RSVinit
-        ww[5] = RSVinit
-        ww[6] = τz0
-        ww[7] = τz0
-        ww[8] = log10(θ[virtual_idx])  # state
-        open(XXX, "w") do io
-        write(io, "# problem=SEAS Benchmark BP5-QD\n")  # 
-        write(io, "# code=Thrase\n")
-        write(io, "# modeler=B. A. Erickson\n")
-        write(io, "# date=2023/01/09\n")
-        write(io, "# element size=xx m\n")
-        write(io, "# location=on fault, z = "*string(parse(Int64, station_strings[n])/10)*" km\n")
-        write(io, "# Lz = 80 km\n")
-        write(io, "# t slip_y slip_z slip_rate_y slip_rate_z shear_stress state\n")
-
-        writedlm(io, ww)
-    end
-  end
+    return res
 
 end
 
-# havent adjusted for 3d yet
-function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc_y, flt_loc_z, flt_loc_indices, station_strings, station_indices, p, base_name="", tdump=100)
-  
-  path_to_slip = pth * "slip.dat"
-  Vmax = 0.0
 
-  # All of this is to get the right indices to work out agh
-    Nyp = length(yf)
-    Nzp_virtual = length(flt_loc_z)
-    Nzp = length(zf)
+"""
+Function to set the rate and state parameter for the fault face in BP5
+"""
+function initialize_friction_params_vec(RS_params, grid_params, Nθ, indices)
 
-    N = Nyp * Nzp
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
 
+    # Setup result matrix where values with be a_min, a_max, or r of a
+    rows = indices[1, 2] - indices[1, 1] + 1
+    cols = indices[2, 2] - indices[2, 1] + 1
+    res = zeros(rows*cols)
 
-  if isdefined(i,:fsallast) 
-    Nθ = p.Nθ
-    dψV = i.fsallast
-    dψ = @view dψV[1:Nθ]
-    V = @view dψV[Nθ .+ (1:2*N)]
-    Vmax = maximum(abs.(extrema(V)))
-    δ = @view ψδ[Nθ .+ (1:2*N)]
-    ψ = @view ψδ[1:Nθ ]
-    τf = p.τf
-  
- 
-    θ = (p.RSDc * exp.((ψ .- p.RSf0) ./ p.RSb)) / p.RSV0  # Invert ψ for θ.
-  
-    
+    for row in 1:rows
 
-    if mod(ctr[], p.save_stride_fields) == 0 || t == (p.sim_years ./ 31556926)
-      vv = Array{Float64}(undef, 1, 2+(length(flt_loc_y) * length(flt_loc_z)))
-      vv[1] = t
-      vv[2] = (Vmax)
+        for col in 1:cols
 
-      # a bit tricky in 3d
-      # Might regret this but lets store these indices as 1, 2 -> t, log10(vmax), 
-      # then 3, 4 -> (y1, z1), 5, 6 -> (y1, z2) ... etc
-      #
-        y_offset = flt_loc_indices[1, 1]
-        z_offset = flt_loc_indices[2, 1]
-        for i in eachindex(flt_loc_y)
-            for j in eachindex(flt_loc_z)
-                virtual_idx = 2 + (i - 1) * Nzp_virtual + j
-                real_idx =  2 + (i + y_offset - 1) * Nzp + j + z_offset
-                vv[virtual_idx] = δ[real_idx]
-                # vv[virtual_idx + 1] = δ[real_idx]
+            # adjust the indices for the actual coefficient calc, kill myself
+            y_idx = row + indices[1, 1] - 1
+            z_idx = col + indices[2, 1] - 1
+
+            idx = (row - 1) * cols + col
+
+            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
+                # Non RS zone
+                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
+               res[idx] = 0.0
+
+            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
+                
+                if (z_grid[z_idx] <= hs) || (z_grid[z_idx] >= hs + H + 2*ht) || (abs(y_grid[y_idx]) >= l/2 + ht)
+                    # Get entire VS region
+                    res[idx] = a_max
+                elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (abs(y_grid[y_idx]) < l/2)
+                    # VW and NZ
+                    res[idx] = a_min
+                else
+                    # Transition Region
+                    res[idx] = (RS_r(y_grid[y_idx], z_grid[z_idx], hs, ht, H, l) * (a_max - a_min)) + a_min
+
+                end
+            else
+                print("Error in VS Index setup")
             end
         end
+    end
 
-        open(path_to_slip, "a") do io
-            writedlm(io, vv)
+    return res
+
+end
+
+
+"""
+Use a function to set the theta values according to BP5 description on the fault
+
+    Inputs: 
+        - RS_params and grid params per the previous functions to get fault data
+        - A coefficients to set them correctly
+    Output:
+        - Theta: 1 x num_nodes in fault where num_nodes will be the rate and state area (VS) area < Nyp x Nzp
+        - Indices: [y1, y2;   To keep track of where the area goes from
+                    z1, z2]   Kind of funky, will be 1:N_z dir .+ 1:Nzp:NypxNzp (sub rect at z=0) 
+                    
+        - Num nodes in theta 
+
+"""
+function set_theta(RS_params, grid_params)
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, RSVinit = RS_params
+
+    # STEP 1: Find the size of the RS zone
+
+    # Initialize stoppers
+    ny_start = 0
+    ny_end = 0
+    nz_end = 0
+
+    # Get Y nodes
+    for i in eachindex(y_grid)
+        if abs(y_grid[i]) <= lf/2 && ny_start == 0 
+            ny_start = i
         end
+        if abs(y_grid[i]) > lf/2 && ny_end == 0 && ny_start != 0
+            ny_end = i-1
+            break
+        end
+    end
 
+    if ny_end == 0
+        ny_end = length(y_grid)
+    end
 
-        for i = 1:length(station_strings)
-            y_idx = station_indices[i, 1]
-            z_idx = station_indices[i, 2]
-            real_idx = (y_idx - 1) * Nzp + z_idx
-            virtual_idx = (y_idx - 1 - y_offset) * Nzp_virtual + z_idx - z_offset
+    # get z nodes
+    for i in eachindex(z_grid)
+        if z_grid[i] > Wf
+            nz_end = i - 1
+            break
+        end
+    end
+
+    if ny_end == 0
+        ny_end = length(y_grid)
+    end
+
+    # Account for case where it all is in there
+    if nz_end == 0
+        nz_end = length(z_grid)
+    end
+
+    # print("\nDEBUG $(ny_start):$(ny_end), 1:$(nz_end)")
+    # initialize theta
+    θ = RSDc ./ RSVinit .* ones((nz_end) * (ny_end - ny_start + 1))
+    
+    return (θ, 
+            [ny_start ny_end; 1 nz_end;], 
+            (nz_end) * (ny_end - ny_start + 1))
+end
             
-            ww = Array{Float64}(undef, 1, 8)
-            ww[1] = t
+"""
+Modify τ term for BP5 Problem setup in Nucleation zone of Rate and State fault
 
-            ww[2] = δ[real_idx] # y comp
-            ww[3] = δ[real_idx + N] # z comp
+τ is a stacked vector [τy, τz] , but only τy is affected here
+"""
+function set_prestress_QD!(τ0, RS_params, grid_params, τ_params, Nθ, indices)
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
+    Vi, V0, Vinit, σn, η, RSb, RSf0 = τ_params 
 
-            ww[4] = (V[real_idx]) # y comp
-            ww[5] = (V[real_idx + N]) # z comp
+    rows = indices[1, 2] - indices[1, 1] + 1
+    cols = indices[2, 2] - indices[2, 1] + 1
+    
+    for row in 1:rows
 
-            ww[6] = τf[virtual_idx]
-            ww[7] = τf[virtual_idx + Nθ]
-            ww[8] = log10(θ[virtual_idx])
+        for col in 1:cols
+            
+            y_idx = row + indices[1, 1] - 1
+            z_idx = col + indices[2, 1] - 1
+            idx = (row - 1) * cols + col
 
-            XXX = pth * "fltst_strk"*station_strings[i]*".txt"
-            open(XXX, "a") do io
-                writedlm(io, ww)
+            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
+                # in non rs zone 
+                nothing
+
+            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
+                
+                if (z_grid[z_idx] <= hs) || (z_grid[z_idx] >= hs + H + 2*ht) || (abs(y_grid[y_idx]) >= l/2 + ht)
+                    # Get entire VS region
+                    nothing
+                # GET Nucleation Zone here: First check Z requirements, then 1sided NZ
+                # Check with Brittany about this too 
+                #TODO
+                elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (y_grid[y_idx] >= -l/2 && y_grid[y_idx] <= -l/2 + w)
+                    # Update τ0
+                    τ0[idx] = σn * a_min * asinh( (Vi / (2*V0)) * exp((RSf0 + RSb * log(V0 / Vinit)) / a_min) ) + (η * Vi)
+                    
+                else
+                    # Transition Region + VW not in W
+                    nothing
+
+                end
+            else
+                print("Error in VS Index setup")
             end
         end
-      
     end
-  
-    global ctr[] += 1
-  end
 
-  Vmax
-end
-
-# find_ind() differentiates b/t phases by defining
-# interseismic when max slip rate < 10^-3 m/s
-# mv is maximum slip rate (log10 m/s) 
-function find_ind(mv)
-  ind = [1]
-  int = 1
-  cos = 0
-  for i = 2:length(mv)
-    if mv[i] > -3 && int == 1 && cos == 0
-      append!(ind, i);
-      int = 0;
-      cos = 1;
-    end
-  
-    if mv[i] < -3 && int == 0 && cos == 1
-      append!(ind, i-1)
-      int = 1
-      cos = 0
-    end
-  end
-
-
-  ind = append!(ind, length(mv));  #tack on for plotting any part of an incomplete coseismic/interseismic phase
-  
-  return ind
 end
 
 
-# plot_slip will plot slip contours from devol.txt - every 5 years in blue during interseismic, 
-# every 1 second in red during coseismic
-function plot_slip_3D(filename)
+"""
+Function to set the rate and state τ for the fault face in BP5 after a traction update
+"""
+function update_tau_v_vec(τ_full, v_full, RS_params, grid_params, Nθ, indices)
 
-    grid = readdlm(filename, Float64)
-    sz = size(grid)
-    flt_loc_y = grid[1,3:end]
-    flt_loc_z = grid[2,3:end]
-    T = grid[3:sz[1],1]
-    maxV = grid[3:end, 2]
-    slip = grid[3:sz[1], 3:sz[2]]
-    N = size(slip)[2]
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
 
-
-    ind = find_ind(maxV);        #finds indices for inter/co-seismic phases
-    interval = [5*31556926 1]   #plot every 5 years and every 1 second
+    # Setup result matrix where values with be a_min, a_max, or r of a
+    rows = indices[1, 2] - indices[1, 1] + 1
+    cols = indices[2, 2] - indices[2, 1] + 1
+    N = rows * cols
+    res_t2 = zeros(N)
+    res_t3 = zeros(N)
+    res_v2 = zeros(N)
+    res_v3 = zeros(N)
     
-    ct = 0   #this counts the number of events
 
+    for row in 1:rows
 
-    #Assumes an initial interseismic period
-    #This for-loop only plots completed phases
-    for i = 1:2:length(ind)-2
+        for col in 1:cols
+
+            # adjust the indices for the actual coefficient calc, kill myself
+            y_idx = row + indices[1, 1] - 1
+            z_idx = col + indices[2, 1] - 1
+            actual_idx = (y_idx - 1) * Nzp + z_idx
+            idx = (row - 1) * cols + col
+
+            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
+                # Non RS zone
+                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
+               print("Error in VS Index setup")
+
+            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
         
-        T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
-
-        W1 = interp1(T,slip[:,1],T1)';
-        
-        for j = 2:N 
-        w1 = interp1(T,slip[:,j],T1)';
-        W1 = [W1; w1]
+                res_t2[idx] = τ_full[actual_idx] # set τy
+                res_t3[idx] = τ_full[actual_idx + (Nyp * Nzp)] # set τz since they're stacked
+                res_v2[idx] = v_full[actual_idx] # set τy
+                res_v3[idx] = v_full[actual_idx + (Nyp * Nzp)]
+              
+            else
+                print("Error in VS Index setup")
+            end
         end
-
-        if i == 1
-        plot(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
-        else
-        plot!(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
-        end
-
-    
-        T1 = T[ind[i+1]]:interval[2]:T[ind[i+2]];
-
-
-        W1 = interp1(T,slip[:,1],T1)';
-        for j = 2:N 
-        w1 = interp1(T,slip[:,j],T1)';
-        W1 = [W1; w1]
-        end
-
-        plot!(W1, flt_loc_y, linecolor = :red, legend = false) #interseismic phase
-
-        ct = ct+1;
     end
 
+    return res_t2, res_t3, res_v2, res_v3
+
+end
+
+
+"""
+Function to set the rate and state τ for the fault face in BP5 after a traction update
+"""
+function set_v_vec(v_full, RS_params, grid_params, Nθ, indices)
+
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
+
+    # Setup result matrix where values with be a_min, a_max, or r of a
+    rows = indices[1, 2] - indices[1, 1] + 1
+    cols = indices[2, 2] - indices[2, 1] + 1
+    N = rows * cols
+    res = zeros(2 * N)
     
-    # plot remainder of an incomplete interseismic period:
-    i = length(ind)-1;
-    T1 = T[ind[i]]:interval[1]:T[ind[i+1]];
-    W1 = interp1(T,slip[:,1],T1)';
-    print(W1)
-    # Quick pull out Ys
-    #=
-    for i in eachindex(flt_loc_y)
-        W1_y[i] = slip[W1[(i-1)*length(flt_loc_z) + 1]]
+
+    for row in 1:rows
+
+        for col in 1:cols
+
+            # adjust the indices for the actual coefficient calc, kill myself
+            y_idx = row + indices[1, 1] - 1
+            z_idx = col + indices[2, 1] - 1
+            actual_idx = (y_idx - 1) * Nzp + z_idx
+            idx = (row - 1) * cols + col
+
+            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
+                # Non RS zone
+                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
+               print("Error in VS Index setup")
+
+            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
+        
+                res[idx] = τ_full[actual_idx] # set τy
+                res[idx + N] = τ_full[actual_idx + (Nyp * Nzp)] # set τz since they're stacked
+              
+            else
+                print("Error in VS Index setup")
+            end
+        end
     end
+
+    return res
+
+end
+"""
+Taken straight outta Alex's code lets goooo
+"""
+
+function rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)
+    # V and τ both stand for absolute value of slip rate and traction vecxtors. 
+    Y_v = (1 ./ (2 .* RSV0)) .* exp.(ψ ./ RSas)
+    f_v = RSas .* asinh.(V_v .* Y_v)
+    dfdV_v = RSas .* (1 ./ sqrt.(1 .+ (V_v .* Y_v) .^ 2)) .* Y_v
+  
+    g_v = σn .* f_v .+ η .* V_v .- τ_v
+    dgdV_v = σn .* dfdV_v .+ η
+    return (g_v, dgdV_v)
+end
+
+function newtbndv_vectorized(rateandstate_vectorized, xL, xR, V_v, ψ, σn, τ_v, η, 
+                        RSas, RSV0; ftol=1e-6, maxiter = 500, minchange = 0, atolx = 1e-4, rtolx=1e-4)
+    fL_v = rateandstate_vectorized(xL, ψ, σn, τ_v, η, RSas, RSV0)[1]
+    fR_v = rateandstate_vectorized(xR, ψ, σn, τ_v, η, RSas, RSV0)[1]
+
+    if any(x -> x > 0, fL_v .* fR_v)
+        return (fill(typeof(V_v)(NaN), length(V_v)), fill(typeof(V_v)(NaN), length(V_v)), -maxiter)
+    end
+
+    f_v, df_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)
+    dxlr_v = xR .- xL
+
+    for iter = 1:maxiter
+        dV_v = -f_v ./ df_v
+        V_v = V_v .+ dV_v
+        
+        mask = (V_v .< xL) .| (V_v .> xR) .| (abs.(dV_v) ./ dxlr_v .< minchange)
+        V_v[mask] .= (xR[mask] .+ xL[mask]) ./ 2
+        dV_v[mask] .= (xR[mask] .- xL[mask]) ./ 2
+
+        f_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)[1]
+        df_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)[2]
+        
+        mask_2 = f_v .* fL_v .> 0
+        fL_v[mask_2] .= f_v[mask_2]
+        xL[mask_2] .= V_v[mask_2]
+        fR_v[.!mask_2] .= f_v[.!mask_2]
+        xR[.!mask_2] .= V_v[.!mask_2]
+
+        dxlr_v .= xR .- xL
+
+        if all(abs.(f_v) .< ftol) && all(abs.(dV_v .< atolx .+ rtolx .* (abs.(dV_v) .+ abs.(V_v))))
+            return (V_v, f_v, iter)
+        end
+    end
+    return (V_v, f_v, -maxiter)
+
+end
+
+"""
+Update the actual RS velocity
+"""
+function update_V_RS_zone!(V, V_updates, RS_params, grid_params, Nθ, indices)
+
+    _, y_grid, z_grid,
+    Nxp, Nyp, Nzp = grid_params
+    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
+    Vy, Vz = V_updates
+
+    # Setup result matrix where values with be a_min, a_max, or r of a
+    rows = indices[1, 2] - indices[1, 1] + 1
+    cols = indices[2, 2] - indices[2, 1] + 1
+    res_y = zeros(rows*cols)
+    res_z = zeros(rows*cols)
+
+    for row in 1:rows
+
+        for col in 1:cols
+
+            # adjust the indices for the actual coefficient calc, kill myself
+            y_idx = row + indices[1, 1] - 1
+            z_idx = col + indices[2, 1] - 1
+            actual_idx = (y_idx - 1) * Nzp + z_idx
+            idx = (row - 1) * cols + col
+
+            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
+                # Non RS zone
+                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
+               nothing
+
+            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
+        
+                V[actual_idx] = Vy[idx] # set τy
+                V[actual_idx + (Nyp * Nzp)] = Vz[idx]
+                
+            else
+                print("Error in VS Index setup")
+            end
+        end
+    end
+
+    return [res_y res_z]
+end
+
+ # Function that finds the depth-index corresponding to a station location
+function find_station_index(stations, y_grid, z_grid)
+      numstations = length(stations)
+      station_ind = zeros(numstations, 2)
+      for i in range(1, stop=numstations)
+        station_ind[i, 1] = argmin(abs.(y_grid .- stations[i][1])) # get y indx
+        station_ind[i, 2] = argmin(abs.(z_grid .- stations[i][2])) # get z indx
+      end
+    return Integer.(station_ind)
+end
+# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
+# 
+#
+# File and IO Helpers
+#
+#
+# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
+
+            
+function read_params_BP5(f_name)
+    f = open(f_name, "r")
+    tmp_params = []
+    while ! eof(f)
+        s = readline(f)
+        if s[1] != '#'
+            push!(tmp_params, split(s, '=')[2])
+            flush(stdout)
+        end
+    end
+  close(f)
+
+ 
+    #=  (pth, stride_space, stride_time, SBPp
+        xc, yc, zc
+        Hx, Hy, Hz, 
+        Nx, Ny, Nz, 
+        ρ, cs, ν, 
+        RSamin, RSamax, RSb
+        σn, RSDc, Vp,
+        RSV0, RSf0, RShs
+        RSht, RSH, RSl
+        RSlf, W, Δz,
+        sim years) = read_params(localARGS[1])
     =#
-        for j = 2:N 
-            w1_y = interp1(T,slip[:,j],T1)';
-            W1 = [W1; w1_y]
-        end
-        if i == 1
-            plot(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
-        else
-            plot!(W1, flt_loc_y, linecolor = :blue, legend = false) #interseismic phase
-        end
-
-        xlabel!("Cumulative Slip (m)")
-        ylabel!("Fault Position (Y) (km)")
-        title!("Slip at Depth z = 0km")
-        png("./output/slip.png")
+    params = Vector{Any}(undef, 34)
+    params[1] = strip(tmp_params[1]) # pth
+    params[2] = parse(Int64, tmp_params[2]) # stride_space
+    params[3] = parse(Int64, tmp_params[3]) # stride_time
+    params[4] = parse(Int64, tmp_params[4]) # SBPp 
+    params[5] = (parse(Float64, tmp_params[5]), parse(Float64, tmp_params[6])) # xc
+    params[6] = (parse(Float64, tmp_params[7]), parse(Float64, tmp_params[8])) # yc
+    params[7] = (parse(Float64, tmp_params[9]), parse(Float64, tmp_params[10])) # zc
+    params[8] = parse(Int64, tmp_params[11]) # Hx
+    params[9] = parse(Int64, tmp_params[12]) # Hy
+    params[10] = parse(Int64, tmp_params[13]) # Hz
+    params[11] = parse(Int64, tmp_params[14]) # Nx
+    params[12] = parse(Int64, tmp_params[15]) # Ny
+    params[13] = parse(Int64, tmp_params[16]) # Nz
+    for i = 17:length(tmp_params)
+      params[i-3] = parse(Float64, tmp_params[i])
+    end
+    
+  return params
 end
-
-# plot_slip will plot slip contours from devol.txt - every 5 years in blue during interseismic, 
-# every 1 second in red during coseismic
-function plot_traction_3D(filename)
-
-    # read in the grid
-    grid = readdlm(filename, Float64; comments=true)
-    sz = size(grid)
-
-
-    time = grid[2:end, 1] ./ 31556926 # grab time in years
-    δy =   grid[2:end, 2] 
-    δz =   grid[2:end, 3] 
-    vy =   grid[2:end, 4]
-    vz =   grid[2:end, 5]
-    τy =   grid[2:end, 6]
-    τz =   grid[2:end, 7]
-    θ  =   grid[2:end, 8]
-
-    filename_prefix = split(filename, ".t")[1]
-    
-    plot(time, δy)
-    xlabel!("time (yrs)")
-    ylabel!("slip y (m)")
-    title!("Slip in Y Direction vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_slip_y.png")
-
-    plot(time, δz)
-    xlabel!("time (yrs)")
-    ylabel!("slip z (m)")
-    title!("Slip in Z Direction vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_slip_z.png")
-
-    plot(time, vy)
-    xlabel!("time (yrs)")
-    ylabel!("slip rate y (m/s)")
-    title!("Slip Rate in Y Direction vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_sliprate_y.png")
-
-    plot(time, vz)
-    xlabel!("time (yrs)")
-    ylabel!("slip rate z (m/s)")
-    title!("Slip Rate in Z Direction vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_sliprate_z.png")
-
-    plot(time, τy)
-    xlabel!("time (yrs)")
-    ylabel!("τ-y")
-    title!("Stress in Y Direction vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_stress_y.png")
-
-    plot(time, τz)
-    xlabel!("time (yrs)")
-    ylabel!("τ-z")
-    title!("Stress in Z Direction vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_stress_z.png")
-
-    plot(time, θ)
-    xlabel!("time (yrs)")
-    ylabel!("θ")
-    title!("RS State vs Time at $(split(filename_prefix, "_")[2])")
-    png("$(filename_prefix)_state.png")
-end
-
-    
-
-    
-

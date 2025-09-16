@@ -5,6 +5,7 @@ using DifferentialEquations
 using Printf
 
 using DelimitedFiles
+using IterativeSolvers
 
 function odefun(dψV, ψδ, p, t)
   
@@ -59,9 +60,10 @@ function odefun(dψV, ψδ, p, t)
     remote_boundary = (Vp .* t ./ 2) .* ones(3 * Nqp * Nrp * Nsp) # Slow creep at face 2 
 
     bdry_vec_strip!(b, B, δ ./ 2, remote_boundary, params)
-
+    
     # solve for displacements everywhere in domain
-    u[:] = M \ b
+    cg!(u, M, b)
+    
 
     # set up rates of change for  state and slip
     dψ  = @view dψV[(1:Nθ)]

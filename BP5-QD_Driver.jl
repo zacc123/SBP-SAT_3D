@@ -12,14 +12,11 @@ using Dates
 
 using CUDA
 
-include("./BP5_ops.jl")
+include("./ops_BP5.jl")
 include("./odefun_BP5.jl")
 include("./utils.jl") # get 3d metrics and ops
-include("./utils_3D.jl") # actual utils file
 
-# TODO: Remove this eventually
-
-#b global const pth_glob = "./bp5_3D.dat"
+const global localARGS = ["./BP5.dat"]
 
 
 function main()
@@ -127,7 +124,7 @@ function main()
     print("\nCreating Operators Done\n") 
 
     print("\nGetting LU Factorization of M\n")
-    @time M = lu(M) # matrix factorization
+    # @time M = lu(M) # matrix factorization
     print("\nLU Factorization of M done\n")
 
      # initialize time and vector b that stores boundary data (linear system will be Au = b, where b = B*g)
@@ -276,7 +273,7 @@ function main()
     # For plotting
 
     for idx in eachindex(stations)
-        filename = "./output/fltst_strk$(station_strings[idx]).txt"
+        filename = "$(pth)fltst_strk$(station_strings[idx]).txt"
         plot_traction_3D(filename)
     end
 end

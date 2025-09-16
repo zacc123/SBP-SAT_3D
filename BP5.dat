@@ -4,7 +4,7 @@
 #
 # details of output data:
 # path to directory that stores output data
-pth = ./output/
+pth = ./output_cg/
 # write-out every "stride_space" grid points along fault
 stride_space = 1
 # write-out every "stride_time" time steps
@@ -19,13 +19,13 @@ SBPp   = 2
 # computational domain size
 # x-domain is (Lx1, Lx2) (km)
 Lx1 = 0
-Lx2 = 40
+Lx2 = 20
 # y-domain is (Ly1, Ly2) (km)
-Ly1 = -20
-Ly2 =  20
+Ly1 = -10
+Ly2 =  10
 # z-domain is (Lz1, Lz2) (km)
 Lz1 = 0
-Lz2 = 40
+Lz2 = 20
 #
 # dimensions in which constant grid-spacing is applied:
 Hx = 5
@@ -34,9 +34,9 @@ Hz = 5
 #
 # number of grid points in each dimension 
 # make sure to resolve h* and l_b; should be written as integer.
-Nx = 20
-Ny = 20
-Nz = 20
+Nx = 10
+Ny = 10
+Nz = 10
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # #
