@@ -831,20 +831,24 @@ T33_3 = (-sJI3) * (c[2,3,1,3]*Dq3 + c[2,3,2,3]*Sr + c[2,3,3,3]*Ds3)
     # AND ALL TOGETHER: MU = [B11*g1 + B12*g2 + B13*g3; B21*g1 + B22*g2 + B23*g3; B31*g1 + B32*g2 + B33*g3] + J*H*f  where
     A = [A11 A12 A13; A21 A22 A23; A31 A32 A33]
     S = [S11 S12 S13; S21 S22 S23; S31 S32 S33]
+
+
+    HA = [(H * A11) (H * A12) (H*A13); (H * A21) (H * A22) (H*A23); (H * A31) (H * A32) (H*A33)]
+    HS = [(H * S11) (H * S12) (H*S13); (H * S21) (H * S22) (H*S23); (H * S31) (H * S32) (H*S33)]
  
-    
     M = A + S
+    HM = HA + HS
     @show sizeof(A)
     @show sizeof(S)
     
     B = (b11, 1*b12, 1*b13, 1*b21, b22, 1*b23, 1*b31, 1*b32, b33)
-   
+    
     # and f = [f1; f2; f3]
     # where U = [u1; u2; u3]
     JH = J*H
     
     T = (T1) # maybe fill in other faces eventually 
-    return (M, B, JH, A, S, HqI, HrI, HsI, T, e)
+    return (M, B, JH, A, S, HqI, HrI, HsI, T, e, H, HM)
 
 
 end
@@ -929,6 +933,10 @@ function var_3D_D2s(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1))
     return D2s, S0s, SNs
 end
 
+
+"""
+Normal B vec strip without H on both sides
+"""
 function bdry_vec_strip!(g, B, slip_data, remote_data, params)
 
 
@@ -986,6 +994,92 @@ function bdry_vec_strip!(g, B, slip_data, remote_data, params)
     return nothing
 
 end
+
+"""
+With H on RHS for SPD in CG
+"""
+function bdry_vec_strip!(g, B, slip_data, remote_data, H, params)
+
+
+    Nqp, Nrp, Nsp = params
+    # Initialize Boundary data to 0 (g is Nqp x Nrp x Nsp x 3) 
+    g[:] .= 0
+
+
+    # boundary comps, remember b11[1] -> 1st comp or res times u1 of face 1, b21[3] -> 2nd comp of res times u1, face 3
+    b11, b12, b13, 
+    b21, b22, b23,
+    b31, b32, b33 = B
+
+    # fault (Dirichlet):
+    # Assume slip data comes stacked (u1, u2, u3)
+    Nface_1 = Nface_2 = Nrp * Nsp
+
+    N = Nqp * Nrp * Nsp
+
+    # Separate out the vectors for simplicity 
+    # g1_1 -> 1st comp of 1st face, g2_1 -> 2nd comp of 1st face...etc
+    g1_1 = zeros(Nface_1)
+    g2_1 = slip_data[1:Nface_1]
+    g3_1 = slip_data[(Nface_1 + 1):(2 * Nface_1)]
+    
+    
+    
+    # Face 1 Dir (this is the worst dont worry)
+    g[1:N] .+= H * ((b11[1] * g1_1) .+ (b12[1] * g2_1) .+ (b13[1] * g3_1))
+    g[N+1: 2*N] .+= H * ((b21[1] * g1_1) .+ (b22[1] * g2_1) .+ (b23[1] * g3_1))
+    g[2*N + 1: 3*N] .+= H * ((b31[1] * g1_1) .+ (b32[1] * g2_1) .+ (b33[1] * g3_1))
+    
+    # FACE 2 (Dirichlet) Not so bad tho:
+    g1_2 = remote_data[1:Nface_2]
+    g2_2 = remote_data[(Nface_2 + 1):(2 * Nface_2)]
+    g3_2 = remote_data[(2*Nface_2 + 1):(3 * Nface_2)] 
+    
+    # g1_1, g3_2 .== 0
+    g[N+1:2*N] .+= H * (b22[2] * g2_2)
+
+    # Usually these are included but set to 0, will need to talk to Brittany about it
+    # For rn comment out
+    # TODO
+    #=
+    # FACE 3 (Neumann):
+    gN = free_surface_data
+    vf = gN
+    g[:] += B[3] * sJ[3] * vf  #TODO: prob error
+
+    # FACE 4 (Neumann):
+    gN = free_surface_data
+    vf = gN
+    g[:] += B[4] * sJ[4] * vf #TODO: prob error
+    =#
+    return nothing
+
+end
+
+function computetraction_stripped(T, u, e, sJ)
+
+    # Step 1, get the correct Traction terms for face 1
+    #[ σyx; σzx]
+    # (T11_1 .- Z11_1)'*e1*sJ1*H1*e1T
+    e1, e1T = e[1]
+    N, _ = size(e1) # face 1 restriction operator
+    (T11_1, T12_1, T13_1, 
+     T21_1, T22_1, T23_1, 
+     T31_1, T32_1, T33_1)  = T
+    # τ_y should be the y res of the traction == some mixed derivative and
+    # setting x traction to 0 to avoid tearing on fault 
+
+    # Do this stacking to just multply T by u, ie σyy = T21_1 u1 .+ T22_1 u2 .+ T23_1 us
+    T_2x = [T21_1 T22_1 T23_1]
+    T_3x = [T31_1 T32_1 T33_1]
+
+    τ_y_full = (-e1T * (T_2x * u)) # ./ sJ[1][:]
+    τ_z_full = (-e1T * (T_3x * u)) # ./ sJ[1][:]
+   
+    return [τ_y_full τ_z_full]
+  
+end
+
 
 #=
 Helper functions for use in BP5 Benchmarks
@@ -1531,7 +1625,7 @@ function read_params_BP5(f_name)
         RSlf, W, Δz,
         sim years) = read_params(localARGS[1])
     =#
-    params = Vector{Any}(undef, 34)
+    params = Vector{Any}(undef, 36)
     params[1] = strip(tmp_params[1]) # pth
     params[2] = parse(Int64, tmp_params[2]) # stride_space
     params[3] = parse(Int64, tmp_params[3]) # stride_time
@@ -1545,7 +1639,9 @@ function read_params_BP5(f_name)
     params[11] = parse(Int64, tmp_params[14]) # Nx
     params[12] = parse(Int64, tmp_params[15]) # Ny
     params[13] = parse(Int64, tmp_params[16]) # Nz
-    for i = 17:length(tmp_params)
+    params[14] = parse(Bool, tmp_params[17]) # cg flag
+    params[15] = parse(Bool, tmp_params[18]) # gpu flag
+    for i = 19:length(tmp_params)
       params[i-3] = parse(Float64, tmp_params[i])
     end
     

@@ -4,7 +4,7 @@
 #
 # details of output data:
 # path to directory that stores output data
-pth = ./output_test1_cg/
+pth = ./output_TEST0_gpu_cj_90x30/
 # write-out every "stride_space" grid points along fault
 stride_space = 1
 # write-out every "stride_time" time steps
@@ -19,13 +19,13 @@ SBPp   = 2
 # computational domain size
 # x-domain is (Lx1, Lx2) (km)
 Lx1 = 0
-Lx2 = 20
+Lx2 = 90
 # y-domain is (Ly1, Ly2) (km)
-Ly1 = -10
-Ly2 =  10
+Ly1 = -45
+Ly2 =  45
 # z-domain is (Lz1, Lz2) (km)
 Lz1 = 0
-Lz2 = 20
+Lz2 = 90
 #
 # dimensions in which constant grid-spacing is applied:
 Hx = 5
@@ -34,11 +34,20 @@ Hz = 5
 #
 # number of grid points in each dimension 
 # make sure to resolve h* and l_b; should be written as integer.
-Nx = 10
-Ny = 10
-Nz = 10
+Nx = 30
+Ny = 30
+Nz = 30
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # 
+# Driver options
+# # # # # # # # # # # # # # # # # # # # # 
+# # # # # # # # # # # # # # # # # # # # #
+# Use Conjugate Gradient or Backslash
+cg_flag = true
+# Use GPU to solve
+gpu_flag = true
+# # # # # # # # # # # # # # # # # # # # # 
+# # # # # # # # # # # # # # # # # # # # #
 # # # # # # # # # # # # # # # # # # # # #
 # Actual elastcity and BP5 Table Params #
 # # # # # # # # # # # # # # # # # # # # #
@@ -80,6 +89,5 @@ w = 12
 # suggested cell cize (m)
 Δz = 1000
 # how many years to simulate
-sim_years = 1800
-#
-#
+sim_years = 900
+# END of DAT file

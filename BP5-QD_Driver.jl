@@ -11,6 +11,10 @@ using BenchmarkTools
 using Dates
 
 using CUDA
+using CUDA.CUSPARSE
+using CUDSS
+
+using Arpack
 
 include("./ops_BP5.jl")
 include("./odefun_BP5.jl")
@@ -20,16 +24,12 @@ const global localARGS = ["./BP5.dat"]
 
 function main()
 
-    # my own exp var
-
-    cg_flag = true
-    gpu_flag = false
-
     # Read in params from DAT file for problem
     (pth, stride_space, stride_time, SBPp,
      xc, yc, zc,
      Hx, Hy, Hz, 
      Nx, Ny, Nz, 
+     cg_flag, gpu_flag,
      ρ, cs, ν, 
      RSamin, RSamax, RSb,
      σn, RSDc, Vp, RSVinit,
@@ -56,8 +56,8 @@ function main()
 
     # parameter house keeping and setting up the problem domain
     year_seconds = 31556926
-    μ = cs^2 / ρ 
-    μshear = cs^2 / ρ
+    μ = cs^2 * ρ 
+    μshear = cs^2 * ρ
     η = μshear / (2 * cs)
 
     ################################## COORDINATE TRANSFORM ###################################
@@ -85,6 +85,8 @@ function main()
     Nqp = Nq + 1
     Nrp = Nr + 1 
     Nsp = Ns + 1
+
+    Np = Nqp * Nrp * Nsp # total size of 1 comp of operator (i.e xx part)
 
     # Get stretch factors to move between 
     α_x = (xc[2] - xc[1]) / 2
@@ -123,8 +125,10 @@ function main()
         # A == D2, 
         # S == SAT Coefs
     print("\nCreating Operators....\n")
-    @time (M, B, JH, A, S, HqI, HrI, HsI, T, e) = locoperator(SBPp, Nq, Nr, Ns, metrics, metrics.C) # TODO: extraneaous C from metrics in there
+    @time (M, B, JH, A, S, HqI, HrI, HsI, T, e, H, HM) = locoperator(SBPp, Nq, Nr, Ns, metrics, metrics.C) # TODO: extraneaous C from metrics in there
     print("\nCreating Operators Done\n") 
+
+    M_cu = M # At first use CPU M as GPU
 
      # initialize time and vector b that stores boundary data (linear system will be Au = b, where b = B*g)
     t = 0
@@ -144,27 +148,66 @@ function main()
     bdry_vec_strip!(b, B, δ ./ 2, remote_boundary, params)
    
     # if doing backslash, do this up front
-    if !cg_flag
+    # Everything will be done on CPU with Backslash
+    if !cg_flag && !gpu_flag
         print("\nCG flag set to False, running with Backslash")
+        print("\nGPU flag set to Fase, running on CPU")
         print("\nGetting LU Factorization of M\n")
         @time M = lu(M)
         print("\nLU Factorization of M done\n")
+
         # Calculate initial displacement t = 0
         print("\nTime for 1st solve:")
+        u = M \ b
         @time u = M \ b
-    end
+    elseif !cg_flag && gpu_flag
+        print("\nCG flag set to False, running with Backslash")
+        print("\nGPU flag set to True, running on GPU to solve linear system")
+    
+        print("\nCopying M to Device...")
+        M = CuArray(M)# M can be just on the GPU memory
+        print("Done")
+       
+        # Calculate initial displacement t = 0
+        print("\nTime for 1st solve:")
+        b = reshape(b, :, 1)
+        b_gpu = CuMatrix(b)
+        u_gpu = M \ b_gpu
+        @time u_gpu = M \ b_gpu
+        u = Array(u_gpu)
 
-    if  cg_flag
+    elseif  cg_flag && !gpu_flag
         print("\nCG flag set to True, running with CG")
-        
+        print("\nGPU flag set to Fase, running on CPU")
         u = zeros(size(b)) # need to initialize u
-
         print("\nTime for 1st solve:")
         @time cg!(u, M, b)
+
+    else 
+        # For now assume that Running CG on the GPU
+
+        # Need to do some work ahead of time to 
+            # 1: Assure that matrices are SPD i.e. multiplying by H tilde
+            # 2: Move some of them to the GPU
+        # fml TODO fix this to make it less hectic
+            # this is stupid
+
+        # First Get M to look right and be SPD
+        HM .*= -1
+        M = HM
+        
+        M_cu = CuSparseMatrixCSR(HM)
+        
+        u = zeros(size(b)) # need to initialize u
+        u_gpu = CuArray(u)
+        
+        b_gpu = CuArray(b)
+        print("\nTime for 1st solve:")
+        cg!(u_gpu, M_cu, b_gpu) # warmup
+        @time cg!(u_gpu, M_cu, b_gpu)
+        u = Array(u_gpu)
     end
-
    
-
     # Following vectors, τ, RSa, θ will only apply to Face 1, and are size 1x(NspxNrp)
     # initialize change in shear stress due to quasi-static deformation
    
@@ -246,7 +289,9 @@ function main()
                 save_stride_fields = stride_time, # save every save_stride_fields time steps
                 RS_params = RS_params,
                 RS_indices = RS_indices,
-                t_prv = [0.0]
+                t_prv = [0.0],
+                H = H,
+                M_cu = M_cu
                 )
     # Set time span over which to solve:
     tspan = (0, sim_years * year_seconds)
@@ -254,8 +299,10 @@ function main()
     # Set up ODE problem corresponding to DAE
     if cg_flag && gpu_flag
         prob = ODEProblem(odefun_cg_gpu, ψδ, tspan, odeparam)
-    elseif cg_flag
+    elseif cg_flag && !gpu_flag
         prob = ODEProblem(odefun_cg, ψδ, tspan, odeparam)
+    elseif !cg_flag && gpu_flag
+        prob = ODEProblem(odefun_gpu, ψδ, tspan, odeparam)
     else
         prob = ODEProblem(odefun, ψδ, tspan, odeparam)
     end
