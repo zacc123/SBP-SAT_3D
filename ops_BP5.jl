@@ -3,13 +3,30 @@ include("diagonal_sbp.jl")
 using SparseArrays
 using LinearAlgebra
 using SparseArrayKit
+using CUDA
+using IterativeSolvers
 
 # Zac's Addition
 using Base.Threads
 
-
 ⊗(A,B) = kron(A, B)
 
+# Quick function to make the // easier
+function map(x)
+        if x <= 3
+            i = 1
+            j = mod((x + 2), 3) + 1
+        elseif x > 3 && x<= 6
+            i = 2
+            j = mod((x + 2), 3) + 1
+        elseif x > 6 && x<= 9
+            i = 3
+            j = mod((x + 2), 3) + 1
+        else
+            return -1
+        end
+    return i, j
+end
 
 function create_metrics(pm, Nq, Nr, Ns, λ, μ, K, B_p,
                         xf=(q,r,s)->(q, ones(size(q)), zeros(size(r)), zeros(size(s))),
@@ -465,31 +482,36 @@ function locoperator(p, Nq, Nr, Ns, metrics, C)
     D32 = fill(spzeros(Nqp*Nrp*Nsp, Nqp*Nrp*Nsp), 3, 3)
     D33 = fill(spzeros(Nqp*Nrp*Nsp, Nqp*Nrp*Nsp), 3, 3)
 
+    test_i = [1, 1, 1, 2, 2, 2, 3, 3, 3]
+    test_j = [1, 2, 3, 1, 2, 3, 1, 2, 3]
 
-    for i = 1:3
-        for j = 1:3
-            #D11[i, j] = c[1, i, 1, j] * JI * (Is ⊗ Ir ⊗ D2q)
-           (D11[i, j], _, _) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1))
-            D11[i, j] = JI * D11[i, j]
-            D12[i, j] = c[1, i, 2, j] * JI * (Is ⊗ Dr ⊗ Dq)
-            D13[i, j] = c[1, i, 3, j] * JI * (Ds ⊗ Ir ⊗ Dq)
+    Threads.@threads :static for x = 1:9
+        local idx = x
+        local i = test_i[idx]
+        local j = test_j[idx]
+        #D11[i, j] = c[1, i, 1, j] * JI * (Is ⊗ Ir ⊗ D2q)
+        (D11[i, j], _, _) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1))
+        D11[i, j] = JI * D11[i, j]
+        D12[i, j] = c[1, i, 2, j] * JI * (Is ⊗ Dr ⊗ Dq)
+        D13[i, j] = c[1, i, 3, j] * JI * (Ds ⊗ Ir ⊗ Dq)
 
-            D21[i, j] = c[2, i, 1, j] * JI * (Is ⊗ Dr ⊗ Dq)
+        D21[i, j] = c[2, i, 1, j] * JI * (Is ⊗ Dr ⊗ Dq)
             #D22[i, j] = c[2, i, 2, j] * JI * (Is ⊗ D2r ⊗ Iq)
-           (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1))
-            D22[i, j] = JI * D22[i, j]
-            D23[i, j] = c[2, i, 3, j] * JI * (Ds ⊗ Dr ⊗ Iq)
+        (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1))
+        D22[i, j] = JI * D22[i, j]
+        D23[i, j] = c[2, i, 3, j] * JI * (Ds ⊗ Dr ⊗ Iq)
 
-            D31[i, j] = c[3, i, 1, j] * JI * (Ds ⊗ Ir ⊗ Dq)
-            D32[i, j] = c[3, i, 2, j] * JI * (Ds ⊗ Dr ⊗ Iq)
+        D31[i, j] = c[3, i, 1, j] * JI * (Ds ⊗ Ir ⊗ Dq)
+        D32[i, j] = c[3, i, 2, j] * JI * (Ds ⊗ Dr ⊗ Iq)
             #D33[i, j] = c[3, i, 3, j] * JI * (D2s ⊗ Ir ⊗ Iq)
-           (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
-            D33[i, j] = JI * D33[i, j]
-
-        end
+        (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
+        D33[i, j] = JI * D33[i, j]
+        print("\nFinished Index:$(Threads.threadid()) $(i), $(j)\n")
+        
     end
 
     @show sizeof(D33)
+  
 
     A11 = D11[1, 1] .+ D12[1, 1] .+ D13[1, 1] .+ 
           D21[1, 1] .+ D22[1, 1] .+ D23[1, 1] .+ 
@@ -545,7 +567,7 @@ function locoperator(p, Nq, Nr, Ns, metrics, C)
     HI = HsI ⊗ HrI ⊗ HqI
     JHI = HI * JI
 
-    JIm = spdiagm(0 => JI[:])
+    # JIm = spdiagm(0 => JI[:])
     # Create 3D ops from 1D
     Dq3 = Is ⊗ Ir ⊗ Dq
     Dr3 = Is ⊗ Dr ⊗ Iq
@@ -864,7 +886,8 @@ function var_3D_D2q(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1))
     D2q = spzeros(N, N) # initialize
     S0q = spzeros(N, N) # initialize
     SNq = spzeros(N, N) # initialize
-    Threads.@threads for i = 1:Nrp
+    #Threads.@threads for i = 1:Nrp
+    for i = 1:Nrp
         for j = 1:Nsp
             B = C[:, i, j]# get coefficient on 1D line in q-direction
             (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nqp-1, B; xc = (-1,1))
@@ -891,7 +914,8 @@ function var_3D_D2r(p, Nqp, Nrp, Nsp, C, HIr; xc = (-1, 1))
     S0r = spzeros(N, N) # initialize
     SNr = spzeros(N, N) # initialize
     
-    Threads.@threads for i = 1:Nqp
+    # Threads.@threads for i = 1:Nqp
+    for i = 1:Nqp
         for j = 1:Nsp
             B = C[i, :, j]# get coefficient on 1D line in r-direction
             (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nrp-1, B; xc = (-1,1))
@@ -917,7 +941,8 @@ function var_3D_D2s(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1))
     D2s = spzeros(N, N) # initialize
     S0s = spzeros(N, N) # initialize
     SNs = spzeros(N, N) # initialize
-    Threads.@threads for i = 1:Nrp
+    # Threads.@threads for i = 1:Nrp
+    for i = 1:Nrp
         for j = 1:Nqp
             B = C[j, i, :]# get coefficient on 1D line in s-direction
             (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nsp-1, B; xc = (-1,1))
@@ -1073,8 +1098,8 @@ function computetraction_stripped(T, u, e, sJ)
     T_2x = [T21_1 T22_1 T23_1]
     T_3x = [T31_1 T32_1 T33_1]
 
-    τ_y_full = (-e1T * (T_2x * u)) # ./ sJ[1][:]
-    τ_z_full = (-e1T * (T_3x * u)) # ./ sJ[1][:]
+    τ_y_full = (-e1T * (T_2x * u)) ./ sJ[1][:]
+    τ_z_full = (-e1T * (T_3x * u)) ./ sJ[1][:]
    
     return [τ_y_full τ_z_full]
   

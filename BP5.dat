@@ -4,7 +4,7 @@
 #
 # details of output data:
 # path to directory that stores output data
-pth = ./output_TEST0_gpu_cj_90x30/
+pth = ./output_TEST1_scaling_128x64_Illyad/
 # write-out every "stride_space" grid points along fault
 stride_space = 1
 # write-out every "stride_time" time steps
@@ -19,13 +19,13 @@ SBPp   = 2
 # computational domain size
 # x-domain is (Lx1, Lx2) (km)
 Lx1 = 0
-Lx2 = 90
+Lx2 = 128
 # y-domain is (Ly1, Ly2) (km)
-Ly1 = -45
-Ly2 =  45
+Ly1 = -64
+Ly2 =  64
 # z-domain is (Lz1, Lz2) (km)
 Lz1 = 0
-Lz2 = 90
+Lz2 = 128
 #
 # dimensions in which constant grid-spacing is applied:
 Hx = 5
@@ -34,9 +34,9 @@ Hz = 5
 #
 # number of grid points in each dimension 
 # make sure to resolve h* and l_b; should be written as integer.
-Nx = 30
-Ny = 30
-Nz = 30
+Nx = 64
+Ny = 64
+Nz = 64
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # 
 # Driver options
@@ -89,5 +89,5 @@ w = 12
 # suggested cell cize (m)
 Δz = 1000
 # how many years to simulate
-sim_years = 900
+sim_years = 450
 # END of DAT file

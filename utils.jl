@@ -19,7 +19,7 @@ end
 # havent adjusted for 3d yet
 # big Adjustment we'll write it like this 0 0 Ys
                                         # 0 0 Zs
-function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, t, RSVinit, δ, τz0, θ, yf, zf)
+function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, t, V0_2, V0_z, δ,τ0_2, τ0_3, θ, yf, zf)
 
   
     path_to_slip = pth * "slip.dat"
@@ -88,21 +88,20 @@ function create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations,
         ww[1] = t
         ww[2] = δ[real_idx] #slip y
         ww[3] = δ[real_idx + (Nzp * Nyp)] # slip z
-        ww[4] = RSVinit
-        ww[5] = RSVinit
-        ww[6] = τz0
-        ww[7] = τz0
+        ww[4] = log10(V0_2)
+        ww[5] = log10(V0_3)
+        ww[6] = τ0_2[virtual_idx]
+        ww[7] = τ0_3[virtual_idx + length(θ)]
         ww[8] = log10(θ[virtual_idx])  # state
         open(XXX, "w") do io
         write(io, "# problem=SEAS Benchmark BP5-QD\n")  # 
         write(io, "# code=Thrase\n")
-        write(io, "# modeler=B. A. Erickson\n")
+        write(io, "# modeler=B. A. Erickson & Z. A. Cross\n")
         write(io, "# date=2023/01/09\n")
         write(io, "# element size=xx m\n")
         write(io, "# location=on fault, z = "*string(parse(Int64, station_strings[n])/10)*" km\n")
-        write(io, "# Lz = 80 km\n")
-        write(io, "# t slip_y slip_z slip_rate_y slip_rate_z shear_stress state\n")
-
+        write(io, "# Lz = 128 km\n")
+        write(io, "t slip_2 slip_3 slip_rate_2 slip_rate_3 shear_stress_2 shear_stress_2  state\n")
         writedlm(io, ww)
     end
   end
@@ -175,8 +174,8 @@ function write_to_file_BP5(pth, ψδ, t, i, yf, zf, flt_loc_y, flt_loc_z, flt_lo
             ww[2] = δ[real_idx] # y comp
             ww[3] = δ[real_idx + N] # z comp
 
-            ww[4] = (V[real_idx]) # y comp
-            ww[5] = (V[real_idx + N]) # z comp
+            ww[4] = log10(V[real_idx]) # y comp
+            ww[5] = log10(V[real_idx + N]) # z comp
 
             ww[6] = τf[virtual_idx]
             ww[7] = τf[virtual_idx + Nθ]

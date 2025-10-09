@@ -13,7 +13,6 @@ B_p = (λ = 1.0, μ_in = 2, μ_out = 5, c = 1, r̄ = 144, r_w = 20, on = true)
 # K + 4μ/3 = λ + 2μ 
 # K - 2μ/3 = 
 
-
 # somewhat basic coordinate transform option
 # xf=(q,r,s)->(1 .+ .1 .* sin.(q), 0.1 * cos.(q), zeros(size(r)), zeros(size(s)))
 # yf=(q,r,s)->(.5 .* r, zeros(size(q)), .5 * ones(size(r)), zeros(size(s)))
