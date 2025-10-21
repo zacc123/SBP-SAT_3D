@@ -288,8 +288,10 @@ function main()
     grid_params = (xc[1]:dx:xc[2], yc[1]:dy:yc[2], zc[1]:dz:zc[2],
                     Nqp, Nrp, Nsp)
 
+    
     # Set initial state variable according to benchmark
     θ, RS_indices, Nθ = set_theta(RS_params, grid_params)
+    RSDc = RSDc .* ones(length(θ))
     # Initialize psi version of state variable
     ψ = RSf0 .+ RSb .* log.(RSV0 .* θ ./ RSDc)
 
@@ -300,10 +302,11 @@ function main()
     # A bit tricky, τ has y and z comp.  scalar pres stress initialized according to BP5 eq 22
     τ0 = σn .* RSa .* asinh.((RSVinit / (2 * RSV0)) .* exp.((RSf0 + RSb * log.(RSV0 / RSVinit)) ./ RSa)) .+ (η * RSVinit)
     
+
     Δτ_vec = zeros(2 * length(τ0)) # this will be how stresses change through sim
     τ0_vec = zeros(length(Δτ_vec))
 
-    RSVzero = 10e-20 # TODO move this into DAT file
+    RSVzero = 1e-20 # TODO move this into DAT file
     V = [RSVinit, RSVzero]
     V_mag = norm(V, 2)
 
@@ -318,7 +321,7 @@ function main()
     # TODO move this to the .dat file
     Vi = 0.03
     τ_params = Vi, RSV0, RSVinit, σn, η, RSb, RSf0
-    set_prestress_QD!(τ0_vec, RS_params, grid_params, τ_params, Nθ, RS_indices)
+    set_prestress_QD!(τ0_vec, RS_params, grid_params, τ_params, Nθ, RS_indices, RSDc)
 
     # Set initial condition for index 1 DAE - this is a stacked vector of psi, followed by slip
     # Can ask brittany if this is ok but I think it should work
@@ -371,10 +374,8 @@ function main()
     tspan = (0, sim_years * year_seconds)
 
     # Set up ODE problem corresponding to DAE
-    if cg_flag && gpu_flag
-        prob = ODEProblem(odefun_cg_gpu, ψδ, tspan, odeparam)
-    elseif cg_flag && mem_flag
-        prob = ODEProblem(odefun_cg_mem, ψδ, tspan, odeparam)
+    if cg_flag && mem_flag
+        prob = ODEProblem(odefun_cg_gpu_mem, ψδ, tspan, odeparam)
     elseif cg_flag && !gpu_flag
         prob = ODEProblem(odefun_cg, ψδ, tspan, odeparam)
     elseif !cg_flag && gpu_flag
@@ -394,7 +395,7 @@ function main()
     # Start here getting all this machinery working : ()
     # Make text files to store on-fault time series and slip data,
     # Also initialize with initial data:
-    create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, RSVzero, δ, τ0, θ, y, z)
+    create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, RSVzero, δ, τ0_vec, θ, y, z)
     
     # Solve DAE using Tsit5()
     @time sol = solve(prob, Tsit5(); dt=0.2,

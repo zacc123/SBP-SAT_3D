@@ -246,7 +246,7 @@ end
 
 
 
-function locoperator(p, Nq, Nr, Ns, metrics, C)
+function locoperator(p, Nq, Nr, Ns, metrics, C; AFC=false)
     Nqp = Nq + 1
     Nrp = Nr + 1
     Nsp = Ns + 1
@@ -484,30 +484,62 @@ function locoperator(p, Nq, Nr, Ns, metrics, C)
 
     test_i = [1, 1, 1, 2, 2, 2, 3, 3, 3]
     test_j = [1, 2, 3, 1, 2, 3, 1, 2, 3]
+    if !AFC
+        Threads.@threads :static for x = 1:9
+            local idx = x
+            local i = test_i[idx]
+            local j = test_j[idx]
+            #D11[i, j] = c[1, i, 1, j] * JI * (Is ⊗ Ir ⊗ D2q)
+            (D11[i, j], _, _) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1))
+            D11[i, j] = JI * D11[i, j]
+            D12[i, j] = c[1, i, 2, j] * JI * (Is ⊗ Dr ⊗ Dq)
+            D13[i, j] = c[1, i, 3, j] * JI * (Ds ⊗ Ir ⊗ Dq)
 
-    Threads.@threads :static for x = 1:9
-        local idx = x
-        local i = test_i[idx]
-        local j = test_j[idx]
-        #D11[i, j] = c[1, i, 1, j] * JI * (Is ⊗ Ir ⊗ D2q)
-        (D11[i, j], _, _) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1))
-        D11[i, j] = JI * D11[i, j]
-        D12[i, j] = c[1, i, 2, j] * JI * (Is ⊗ Dr ⊗ Dq)
-        D13[i, j] = c[1, i, 3, j] * JI * (Ds ⊗ Ir ⊗ Dq)
+            D21[i, j] = c[2, i, 1, j] * JI * (Is ⊗ Dr ⊗ Dq)
+                #D22[i, j] = c[2, i, 2, j] * JI * (Is ⊗ D2r ⊗ Iq)
+            (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1))
+            D22[i, j] = JI * D22[i, j]
+            D23[i, j] = c[2, i, 3, j] * JI * (Ds ⊗ Dr ⊗ Iq)
 
-        D21[i, j] = c[2, i, 1, j] * JI * (Is ⊗ Dr ⊗ Dq)
-            #D22[i, j] = c[2, i, 2, j] * JI * (Is ⊗ D2r ⊗ Iq)
-        (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1))
-        D22[i, j] = JI * D22[i, j]
-        D23[i, j] = c[2, i, 3, j] * JI * (Ds ⊗ Dr ⊗ Iq)
+            D31[i, j] = c[3, i, 1, j] * JI * (Ds ⊗ Ir ⊗ Dq)
+            D32[i, j] = c[3, i, 2, j] * JI * (Ds ⊗ Dr ⊗ Iq)
+                #D33[i, j] = c[3, i, 3, j] * JI * (D2s ⊗ Ir ⊗ Iq)
+            (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
+            D33[i, j] = JI * D33[i, j]
+            print("\nFinished Index:$(Threads.threadid()) $(i), $(j)\n")
+            
+        end
+    end
+    # Specify AFC operators from almquist + dunham 
+    if AFC
+        Threads.@threads :static for x = 1:9
+            local idx = x
+            local i = test_i[idx]
+            local j = test_j[idx]
+            #D11[i, j] = c[1, i, 1, j] * JI * (Is ⊗ Ir ⊗ D2q)
+            Eq0 = sparse([1], [1], [1], Nqp, Nqp)
+            Eq0 = sparse([Nqp], [Nqp], [1], Nqp, Nqp)
 
-        D31[i, j] = c[3, i, 1, j] * JI * (Ds ⊗ Ir ⊗ Dq)
-        D32[i, j] = c[3, i, 2, j] * JI * (Ds ⊗ Dr ⊗ Iq)
-            #D33[i, j] = c[3, i, 3, j] * JI * (D2s ⊗ Ir ⊗ Iq)
-        (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
-        D33[i, j] = JI * D33[i, j]
-        print("\nFinished Index:$(Threads.threadid()) $(i), $(j)\n")
-        
+            (D11[i, j], S0_11, SN_11) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1))
+            D11[i, j] = D11[i, j] .- (SN_11 .- S0_11)# AFC Change
+            D11[i, j] = JI * D11[i, j]
+            D12[i, j] = c[1, i, 2, j] * JI * (Is ⊗ Dr ⊗ Dq)
+            D13[i, j] = c[1, i, 3, j] * JI * (Ds ⊗ Ir ⊗ Dq)
+
+            D21[i, j] = c[2, i, 1, j] * JI * (Is ⊗ Dr ⊗ Dq)
+                #D22[i, j] = c[2, i, 2, j] * JI * (Is ⊗ D2r ⊗ Iq)
+            (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1))
+            D22[i, j] = JI * D22[i, j]
+            D23[i, j] = c[2, i, 3, j] * JI * (Ds ⊗ Dr ⊗ Iq)
+
+            D31[i, j] = c[3, i, 1, j] * JI * (Ds ⊗ Ir ⊗ Dq)
+            D32[i, j] = c[3, i, 2, j] * JI * (Ds ⊗ Dr ⊗ Iq)
+                #D33[i, j] = c[3, i, 3, j] * JI * (D2s ⊗ Ir ⊗ Iq)
+            (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
+            D33[i, j] = JI * D33[i, j]
+            print("\nFinished Index:$(Threads.threadid()) $(i), $(j)\n")
+            
+        end
     end
 
     @show sizeof(D33)
@@ -860,6 +892,7 @@ T33_3 = (-sJI3) * (c[2,3,1,3]*Dq3 + c[2,3,2,3]*Sr + c[2,3,3,3]*Ds3)
  
     M = A + S
     HM = HA + HS
+    
     @show sizeof(A)
     @show sizeof(S)
     
@@ -869,6 +902,9 @@ T33_3 = (-sJI3) * (c[2,3,1,3]*Dq3 + c[2,3,2,3]*Sr + c[2,3,3,3]*Ds3)
     # where U = [u1; u2; u3]
     JH = J*H
     
+    JHA = [(JH * A11) (JH * A12) (JH*A13); (JH * A21) (JH * A22) (JH*A23); (JH * A31) (JH * A32) (JH*A33)]
+    JHM = JHA + HS
+
     T = (T1) # maybe fill in other faces eventually 
     return (M, B, JH, A, S, HqI, HrI, HsI, T, e, H, HM)
 
@@ -876,7 +912,7 @@ T33_3 = (-sJI3) * (c[2,3,1,3]*Dq3 + c[2,3,2,3]*Sr + c[2,3,3,3]*Ds3)
 end
 
 
-function var_3D_D2q(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1))
+function var_3D_D2q(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1), afc=false)
     # C has not been diagonalized, e.g. send in C[1,1,1,1], which is size (Nqp, Nrp, Nsp)
     Iq = sparse(I, Nqp, Nqp)
     Ir = sparse(I, Nrp, Nrp)
@@ -1098,8 +1134,9 @@ function computetraction_stripped(T, u, e, sJ)
     T_2x = [T21_1 T22_1 T23_1]
     T_3x = [T31_1 T32_1 T33_1]
 
-    τ_y_full = (-e1T * (T_2x * u)) ./ sJ[1][:]
-    τ_z_full = (-e1T * (T_3x * u)) ./ sJ[1][:]
+    # m and z should be +, but T21_.... have -1 built in 
+    τ_y_full = (-e1T * (T_2x * u)) # sJ[1][:]
+    τ_z_full = (-e1T * (T_3x * u)) # sJ[1][:]
    
     return [τ_y_full τ_z_full]
   
@@ -1363,7 +1400,7 @@ Modify τ term for BP5 Problem setup in Nucleation zone of Rate and State fault
 
 τ is a stacked vector [τy, τz] , but only τy is affected here
 """
-function set_prestress_QD!(τ0, RS_params, grid_params, τ_params, Nθ, indices)
+function set_prestress_QD!(τ0, RS_params, grid_params, τ_params, Nθ, indices, Dc)
     _, y_grid, z_grid,
     Nxp, Nyp, Nzp = grid_params
     ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
@@ -1395,7 +1432,7 @@ function set_prestress_QD!(τ0, RS_params, grid_params, τ_params, Nθ, indices)
                 elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (y_grid[y_idx] >= -l/2 && y_grid[y_idx] <= -l/2 + w)
                     # Update τ0
                     τ0[idx] = σn * a_min * asinh( (Vi / (2*V0)) * exp((RSf0 + RSb * log(V0 / Vinit)) / a_min) ) + (η * Vi)
-                    
+                    Dc[idx] = 0.13
                 else
                     # Transition Region + VW not in W
                     nothing
