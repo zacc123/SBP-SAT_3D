@@ -1,4 +1,4 @@
-include("diagonal_sbp.jl")
+include("../diagonal_sbp.jl")
 
 using SparseArrays
 using LinearAlgebra
@@ -231,7 +231,7 @@ end
 
 
 
-function locoperator(p, Nq, Nr, Ns, metrics, C; AFC=false)
+function locoperator(p, Nq, Nr, Ns, metrics, C; par=false)
     Nqp = Nq + 1
     Nrp = Nr + 1
     Nsp = Ns + 1
@@ -469,7 +469,7 @@ function locoperator(p, Nq, Nr, Ns, metrics, C; AFC=false)
 
     test_i = [1, 1, 1, 2, 2, 2, 3, 3, 3]
     test_j = [1, 2, 3, 1, 2, 3, 1, 2, 3]
-    if !AFC
+    if !par
         Threads.@threads :static for x = 1:9
             local idx = x
             local i = test_i[idx]
@@ -492,11 +492,10 @@ function locoperator(p, Nq, Nr, Ns, metrics, C; AFC=false)
             (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
             D33[i, j] = JI * D33[i, j]
             print("\nFinished Index:$(Threads.threadid()) $(i), $(j)\n")
-            
         end
     end
     # Specify AFC operators from almquist + dunham 
-    if AFC
+    if par
         Threads.@threads :static for x = 1:9
             local idx = x
             local i = test_i[idx]
@@ -505,7 +504,7 @@ function locoperator(p, Nq, Nr, Ns, metrics, C; AFC=false)
             Eq0 = sparse([1], [1], [1], Nqp, Nqp)
             Eq0 = sparse([Nqp], [Nqp], [1], Nqp, Nqp)
 
-            (D11[i, j], S0_11, SN_11) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1))
+            (D11[i, j], S0_11, SN_11) = var_3D_D2q(p, Nqp, Nrp, Nsp, metrics.C[1, i, 1, j], HqI; xc = (-1, 1), par=true)
             D11[i, j] = D11[i, j] .- (SN_11 .- S0_11)# AFC Change
             D11[i, j] = JI * D11[i, j]
             D12[i, j] = c[1, i, 2, j] * JI * (Is ⊗ Dr ⊗ Dq)
@@ -513,17 +512,16 @@ function locoperator(p, Nq, Nr, Ns, metrics, C; AFC=false)
 
             D21[i, j] = c[2, i, 1, j] * JI * (Is ⊗ Dr ⊗ Dq)
                 #D22[i, j] = c[2, i, 2, j] * JI * (Is ⊗ D2r ⊗ Iq)
-            (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1))
+            (D22[i, j], _, _) = var_3D_D2r(p, Nqp, Nrp, Nsp, metrics.C[2, i, 2, j], HrI; xc = (-1, 1), par=true)
             D22[i, j] = JI * D22[i, j]
             D23[i, j] = c[2, i, 3, j] * JI * (Ds ⊗ Dr ⊗ Iq)
 
             D31[i, j] = c[3, i, 1, j] * JI * (Ds ⊗ Ir ⊗ Dq)
             D32[i, j] = c[3, i, 2, j] * JI * (Ds ⊗ Dr ⊗ Iq)
                 #D33[i, j] = c[3, i, 3, j] * JI * (D2s ⊗ Ir ⊗ Iq)
-            (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1))
+            (D33[i, j], _, _) = var_3D_D2s(p, Nqp, Nrp, Nsp, metrics.C[3, i, 3, j], HsI; xc = (-1, 1), par=true)
             D33[i, j] = JI * D33[i, j]
-            print("\nFinished Index:$(Threads.threadid()) $(i), $(j)\n")
-            
+     
         end
     end
 
@@ -897,7 +895,7 @@ T33_3 = (-sJI3) * (c[2,3,1,3]*Dq3 + c[2,3,2,3]*Sr + c[2,3,3,3]*Ds3)
 end
 
 
-function var_3D_D2q(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1), afc=false)
+function var_3D_D2q(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1), par=false)
     # C has not been diagonalized, e.g. send in C[1,1,1,1], which is size (Nqp, Nrp, Nsp)
     Iq = sparse(I, Nqp, Nqp)
     Ir = sparse(I, Nrp, Nrp)
@@ -908,23 +906,59 @@ function var_3D_D2q(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1), afc=false)
     S0q = spzeros(N, N) # initialize
     SNq = spzeros(N, N) # initialize
     #Threads.@threads for i = 1:Nrp
-    for i = 1:Nrp
-        for j = 1:Nsp
-            B = C[:, i, j]# get coefficient on 1D line in q-direction
-            (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nqp-1, B; xc = (-1,1))
-            ej = spzeros(Nsp, 1)
-            ej[j] = 1
-            ei = spzeros(Nrp, 1)
-            ei[i] = 1
-            D2q += (ej ⊗ ei ⊗ Iq) * D2 * (ej' ⊗ ei' ⊗ Iq)
-            S0q += (ej ⊗ ei ⊗ Iq) * S0 * (ej' ⊗ ei' ⊗ Iq)
-            SNq += (ej ⊗ ei ⊗ Iq) * SN * (ej' ⊗ ei' ⊗ Iq)
+    if !par
+        for i = 1:Nrp
+            for j = 1:Nsp
+                B = C[:, i, j]# get coefficient on 1D line in q-direction
+                (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nqp-1, B; xc = (-1,1))
+                ej = spzeros(Nsp, 1)
+                ej[j] = 1
+                ei = spzeros(Nrp, 1)
+                ei[i] = 1
+                D2q += (ej ⊗ ei ⊗ Iq) * D2 * (ej' ⊗ ei' ⊗ Iq)
+                S0q += (ej ⊗ ei ⊗ Iq) * S0 * (ej' ⊗ ei' ⊗ Iq)
+                SNq += (ej ⊗ ei ⊗ Iq) * SN * (ej' ⊗ ei' ⊗ Iq)
+            end
+        end
+    else
+        Iset = (Iq, Ir, Is)
+        chunks = Iterators.partition(1:Nrp, cld(length(1:Nrp), Threads.nthreads() - 9))
+        tasks = map(chunks) do chunk
+               Threads.@spawn var_3D_D2q_single(p, Iset, chunk, Nqp, Nrp, Nsp,N, C; xc=xc)
+        end
+        inter_dr = fetch.(tasks)
+
+        for term in inter_dr
+            D2q += term[1]
+            S0q += term[2]
+            SNq += term[3]
         end
     end
     return D2q, S0q, SNq
 end
 
-function var_3D_D2r(p, Nqp, Nrp, Nsp, C, HIr; xc = (-1, 1))
+function var_3D_D2q_single(p, Iset, chunk_nqp, Nqp, Nrp, Nsp, N, C; xc = (-1, 1))
+    Iq,Ir,Is = Iset
+    D2q = spzeros(N, N) # initialize
+    S0q = spzeros(N, N) # initialize
+    SNq = spzeros(N, N) # initialize
+    for i in chunk_nqp # dont know which I's and Js we got
+            for j = 1:Nsp
+                B = C[:, i, j]# get coefficient on 1D line in q-direction
+                (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nqp-1, B; xc = (-1,1))
+                ej = spzeros(Nsp, 1)
+                ej[j] = 1
+                ei = spzeros(Nrp, 1)
+                ei[i] = 1
+                D2q += (ej ⊗ ei ⊗ Iq) * D2 * (ej' ⊗ ei' ⊗ Iq)
+                S0q += (ej ⊗ ei ⊗ Iq) * S0 * (ej' ⊗ ei' ⊗ Iq)
+                SNq += (ej ⊗ ei ⊗ Iq) * SN * (ej' ⊗ ei' ⊗ Iq)
+            end
+    end
+    return D2q, S0q, SNq
+end
+
+function var_3D_D2r(p, Nqp, Nrp, Nsp, C, HIr; xc = (-1, 1), par = false)
     # C has not been diagonalized, e.g. send in C[1,1,1,1], which is size (Nqp, Nrp, Nsp)
     Iq = sparse(I, Nqp, Nqp)
     Ir = sparse(I, Nrp, Nrp)
@@ -936,18 +970,54 @@ function var_3D_D2r(p, Nqp, Nrp, Nsp, C, HIr; xc = (-1, 1))
     SNr = spzeros(N, N) # initialize
     
     # Threads.@threads for i = 1:Nqp
-    for i = 1:Nqp
-        for j = 1:Nsp
-            B = C[i, :, j]# get coefficient on 1D line in r-direction
-            (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nrp-1, B; xc = (-1,1))
-            ej = spzeros(Nsp, 1)
-            ej[j] = 1
-            ei = spzeros(Nqp, 1)
-            ei[i] = 1
-            D2r += (ej ⊗ Ir ⊗ ei) * D2 * (ej' ⊗ Ir ⊗ ei')
-            S0r += (ej ⊗ Ir ⊗ ei) * S0 * (ej' ⊗ Ir ⊗ ei')
-            SNr += (ej ⊗ Ir ⊗ ei) * SN * (ej' ⊗ Ir ⊗ ei')
+    if !par
+        for i = 1:Nqp
+            for j = 1:Nsp
+                B = C[i, :, j]# get coefficient on 1D line in r-direction
+                (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nrp-1, B; xc = (-1,1))
+                ej = spzeros(Nsp, 1)
+                ej[j] = 1
+                ei = spzeros(Nqp, 1)
+                ei[i] = 1
+                D2r += (ej ⊗ Ir ⊗ ei) * D2 * (ej' ⊗ Ir ⊗ ei')
+                S0r += (ej ⊗ Ir ⊗ ei) * S0 * (ej' ⊗ Ir ⊗ ei')
+                SNr += (ej ⊗ Ir ⊗ ei) * SN * (ej' ⊗ Ir ⊗ ei')
+            end
         end
+    else
+        Iset = (Iq, Ir, Is)
+        chunks = Iterators.partition(1:Nqp, cld(length(1:Nqp), Threads.nthreads() - 9))
+        tasks = map(chunks) do chunk
+               Threads.@spawn var_3D_D2r_single(p, Iset, chunk, Nqp, Nrp, Nsp,N, C; xc=xc)
+        end
+        inter_dr = fetch.(tasks)
+
+        for term in inter_dr
+            D2r += term[1]
+            S0r += term[2]
+            SNr += term[3]
+        end
+    end
+    return D2r, S0r, SNr
+end
+
+function var_3D_D2r_single(p, Iset, chunk_nqp, Nqp, Nrp, Nsp, N, C; xc = (-1, 1))
+    Iq,Ir,Is = Iset
+    D2r = spzeros(N, N) # initialize
+    S0r = spzeros(N, N) # initialize
+    SNr = spzeros(N, N) # initialize
+    for i in chunk_nqp # dont know which I's and Js we got
+            for j = 1:Nsp
+                B = C[i, :, j]# get coefficient on 1D line in r-direction
+                (D2, S0, SN, _, _, _, _) = variable_diagonal_sbp_D2(p, Nrp-1, B; xc = (-1,1))
+                ej = spzeros(Nsp, 1)
+                ej[j] = 1
+                ei = spzeros(Nqp, 1)
+                ei[i] = 1
+                D2r += (ej ⊗ Ir ⊗ ei) * D2 * (ej' ⊗ Ir ⊗ ei')
+                S0r += (ej ⊗ Ir ⊗ ei) * S0 * (ej' ⊗ Ir ⊗ ei')
+                SNr += (ej ⊗ Ir ⊗ ei) * SN * (ej' ⊗ Ir ⊗ ei')
+            end
     end
     return D2r, S0r, SNr
 end
@@ -978,15 +1048,25 @@ function var_3D_D2s(p, Nqp, Nrp, Nsp, C, HIq; xc = (-1, 1), par=false)
             end
         end
     else
-       
-        x = 1
+        Iset = (Iq, Ir, Is)
+        chunks = Iterators.partition(1:Nrp, cld(length(1:Nrp), Threads.nthreads() - 9))
+        tasks = map(chunks) do chunk
+               Threads.@spawn var_3D_D2s_single(p, Iset, chunk, Nqp, Nrp, Nsp,N, C; xc=xc)
+        end
+        inter_ds = fetch.(tasks)
+
+        for term in inter_ds
+            D2s += term[1]
+            S0s += term[2]
+            SNs += term[3]
+        end
 
     end
     return D2s, S0s, SNs
 end
 
-function var_3D_D2s_single(p, Is, chunk_nrp, Nqp, Nrp, Nsp, C; xc = (-1, 1))
-    Iq,Ir,Is = Is
+function var_3D_D2s_single(p, Iset, chunk_nrp, Nqp, Nrp, Nsp, N, C; xc = (-1, 1))
+    Iq,Ir,Is = Iset
     D2s = spzeros(N, N) # initialize
     S0s = spzeros(N, N) # initialize
     SNs = spzeros(N, N) # initialize
@@ -1006,915 +1086,64 @@ function var_3D_D2s_single(p, Is, chunk_nrp, Nqp, Nrp, Nsp, C; xc = (-1, 1))
     return D2s, S0s, SNs
 end
 
+function test()
+    # Move to Logical Names for the rest of simulation
+    Nq = 20
+    Nr = 20
+    Ns = 20
+
+    Nqp = Nq + 1
+    Nrp = Nr + 1 
+    Nsp = Ns + 1
+
+    xc = yc = zc = (0, 100)
+
+    Np = Nqp * Nrp * Nsp # total size of 1 comp of operator (i.e xx part)
+
+    # Get stretch factors to move between 
+    α_x = (xc[2] - xc[1]) / 2
+    α_y = (yc[2] - yc[1]) / 2
+    α_z = (zc[2] - zc[1]) / 2
+
+    β_x = (xc[2] + xc[1]) / 2
+    β_y = (yc[2] + yc[1]) / 2
+    β_z = (zc[2] + zc[1]) / 2
 
 
-"""
-Normal B vec strip without H on both sides
-"""
-function bdry_vec_strip!(g, B, slip_data, remote_data, params)
+    # TODO Fix these with what brittany wants for Coordinate Tranform. Start with trivial 0, Lz -> (-1, 1), etc
+    xt=(q,r,s) -> ((q .* α_x) .+ β_x, ones(size(q)) .* α_x, zeros(size(r)),       zeros(size(s)))
+    yt=(q,r,s) -> ((r .* α_y) .+ β_y, zeros(size(q)),       ones(size(r)) .* α_y, zeros(size(s)))
+    zt=(q,r,s) -> ((s .* α_z) .+ β_z, zeros(size(q)),       zeros(size(r)),       ones(size(s)) .* α_z)
+
+    # TODO: Run these functions by Brittany to set correctly * prob just the normal constant ρ / cs or something
+        # Answer is that these exist in mms.jl : )
+        # Should be fine for now though
+    λ_f(x, y, z, B_p) = 1
+    μ_f(x, y, z, B_p) = 2 
+    K = 2 # Doesnt get used in metrics, but is asked as input
+    B_p = 1
+
+    print("\nCreating metrics....\n")
+    @time metrics = create_metrics(2, Nq, Nr, Ns, λ_f, μ_f, K, B_p, xt, yt, zt)
+    # metrics = create_metrics(SBPp, Nq, Nr, Ns, λ_f, μ_f, K, B_p, xt, yt, zt)
+    print("\nCreating metrics Done\n")
+
+    ###################################################################### 
+    # create finite difference operators on computational domain:
+    # Notation: 
+        # M == D2 + SAT terms for RHS, 
+        # B == Boundary Coefs,
+        # JH == Det of the Jacobian x H tilde,
+        # A == D2, 
+    (M, B, JH, A1, S, HqI, HrI, HsI, T, e, H, HM) = locoperator(2, Nq, Nr, Ns, metrics, metrics.C) # warm up
+    @time (M, B, JH, A1, S, HqI, HrI, HsI, T, e, H, HM) = locoperator(2, Nq, Nr, Ns, metrics, metrics.C) # TODO: extraneaous C from metrics in there
 
 
-    Nqp, Nrp, Nsp = params
-    # Initialize Boundary data to 0 (g is Nqp x Nrp x Nsp x 3) 
-    g[:] .= 0
+    (M, B, JH, A2, S, HqI, HrI, HsI, T, e, H, HM) = locoperator(2, Nq, Nr, Ns, metrics, metrics.C; par=true) # warm up
+    @time (M, B, JH, A2, S, HqI, HrI, HsI, T, e, H, HM) = locoperator(2, Nq, Nr, Ns, metrics, metrics.C, par=true) # TODO: extraneaous C from metrics in there
+    print("\nCreating Operators Done\n") 
 
-
-    # boundary comps, remember b11[1] -> 1st comp or res times u1 of face 1, b21[3] -> 2nd comp of res times u1, face 3
-    b11, b12, b13, 
-    b21, b22, b23,
-    b31, b32, b33 = B
-
-    # fault (Dirichlet):
-    # Assume slip data comes stacked (u1, u2, u3)
-    Nface_1 = Nface_2 = Nrp * Nsp
-
-    N = Nqp * Nrp * Nsp
-
-    # Separate out the vectors for simplicity 
-    # g1_1 -> 1st comp of 1st face, g2_1 -> 2nd comp of 1st face...etc
-    g1_1 = zeros(Nface_1)
-    g2_1 = slip_data[1:Nface_1]
-    g3_1 = slip_data[(Nface_1 + 1):(2 * Nface_1)]
-    
-    
-    
-    # Face 1 Dir (this is the worst dont worry)
-    g[1:N] .+= (b11[1] * g1_1) .+ (b12[1] * g2_1) .+ (b13[1] * g3_1)
-    g[N+1: 2*N] .+= (b21[1] * g1_1) .+ (b22[1] * g2_1) .+ (b23[1] * g3_1)
-    g[2*N + 1: 3*N] .+= (b31[1] * g1_1) .+ (b32[1] * g2_1) .+ (b33[1] * g3_1)
-    
-    # FACE 2 (Dirichlet) Not so bad tho:
-    g1_2 = remote_data[1:Nface_2]
-    g2_2 = remote_data[(Nface_2 + 1):(2 * Nface_2)]
-    g3_2 = remote_data[(2*Nface_2 + 1):(3 * Nface_2)] 
-    
-    # g1_1, g3_2 .== 0
-    g[N+1:2*N] .+= b22[2] * g2_2
-
-    # Usually these are included but set to 0, will need to talk to Brittany about it
-    # For rn comment out
-    # TODO
-    #=
-    # FACE 3 (Neumann):
-    gN = free_surface_data
-    vf = gN
-    g[:] += B[3] * sJ[3] * vf  #TODO: prob error
-
-    # FACE 4 (Neumann):
-    gN = free_surface_data
-    vf = gN
-    g[:] += B[4] * sJ[4] * vf #TODO: prob error
-    =#
-    return nothing
-
+    print("\nNorm 2 between A and A: $(norm(A1 .- A2))")
 end
 
-"""
-With H on RHS for SPD in CG
-"""
-function bdry_vec_strip!(g, B, slip_data, remote_data, H, params)
-
-
-    Nqp, Nrp, Nsp = params
-    # Initialize Boundary data to 0 (g is Nqp x Nrp x Nsp x 3) 
-    g[:] .= 0
-
-
-    # boundary comps, remember b11[1] -> 1st comp or res times u1 of face 1, b21[3] -> 2nd comp of res times u1, face 3
-    b11, b12, b13, 
-    b21, b22, b23,
-    b31, b32, b33 = B
-
-    # fault (Dirichlet):
-    # Assume slip data comes stacked (u1, u2, u3)
-    Nface_1 = Nface_2 = Nrp * Nsp
-
-    N = Nqp * Nrp * Nsp
-
-    # Separate out the vectors for simplicity 
-    # g1_1 -> 1st comp of 1st face, g2_1 -> 2nd comp of 1st face...etc
-    g1_1 = zeros(Nface_1)
-    g2_1 = slip_data[1:Nface_1]
-    g3_1 = slip_data[(Nface_1 + 1):(2 * Nface_1)]
-    
-    
-    
-    # Face 1 Dir (this is the worst dont worry)
-    g[1:N] .+= H * ((b11[1] * g1_1) .+ (b12[1] * g2_1) .+ (b13[1] * g3_1))
-    g[N+1: 2*N] .+= H * ((b21[1] * g1_1) .+ (b22[1] * g2_1) .+ (b23[1] * g3_1))
-    g[2*N + 1: 3*N] .+= H * ((b31[1] * g1_1) .+ (b32[1] * g2_1) .+ (b33[1] * g3_1))
-    
-    # FACE 2 (Dirichlet) Not so bad tho:
-    g1_2 = remote_data[1:Nface_2]
-    g2_2 = remote_data[(Nface_2 + 1):(2 * Nface_2)]
-    g3_2 = remote_data[(2*Nface_2 + 1):(3 * Nface_2)] 
-    
-    # g1_1, g3_2 .== 0
-    g[N+1:2*N] .+= H * (b22[2] * g2_2)
-
-    return nothing
-
-end
-
-"""
-With H on RHS for SPD in CG
-"""
-function bdry_vec_strip_shift!(g, B, slip_data, remote_data, H, params, shifts)
-
-
-    Nqp, Nrp, Nsp = params
-    u1Shift, u2Shift, u3Shift = shifts # unpack shift operators
-    # Initialize Boundary data to 0 (g is Nqp x Nrp x Nsp x 3) 
-    g[:] .= 0
-
-
-    # boundary comps, remember b11[1] -> 1st comp or res times u1 of face 1, b21[3] -> 2nd comp of res times u1, face 3
-    b11, b12, b13, 
-    b21, b22, b23,
-    b31, b32, b33 = B
-
-    # fault (Dirichlet):
-    # Assume slip data comes stacked (u1, u2, u3)
-    Nface_1 = Nface_2 = Nrp * Nsp
-
-    N = Nqp * Nrp * Nsp
-
-    # Separate out the vectors for simplicity 
-    # g1_1 -> 1st comp of 1st face, g2_1 -> 2nd comp of 1st face...etc
-    g1_1 = zeros(Nface_1)
-    g2_1 = slip_data[1:Nface_1]
-    g3_1 = slip_data[(Nface_1 + 1):(2 * Nface_1)]
-    
-    
-    
-    # Face 1 Dir (this is the worst dont worry)
-    g1_tmp = H * ((b11[1] * g1_1) .+ (b12[1] * g2_1) .+ (b13[1] * g3_1))
-    g2_tmp = H * ((b21[1] * g1_1) .+ (b22[1] * g2_1) .+ (b23[1] * g3_1))
-    g3_tmp = H * ((b31[1] * g1_1) .+ (b32[1] * g2_1) .+ (b33[1] * g3_1))
-    
-    # FACE 2 (Dirichlet) Not so bad tho:
-    g1_2 = remote_data[1:Nface_2]
-    g2_2 = remote_data[(Nface_2 + 1):(2 * Nface_2)]
-    g3_2 = remote_data[(2*Nface_2 + 1):(3 * Nface_2)] 
-    
-    # g1_1, g3_2 .== 0
-    g2_tmp .+= H * (b22[2] * g2_2)
-
-    g[:] .+= ((u1Shift * g1_tmp) .+ (u2Shift * g2_tmp) .+ (u3Shift * g3_tmp)) 
-    
-    return nothing
-
-end
-
-function computetraction_stripped(T, u, e, sJ)
-
-    # Step 1, get the correct Traction terms for face 1
-    #[ σyx; σzx]
-    # (T11_1 .- Z11_1)'*e1*sJ1*H1*e1T
-    e1, e1T = e[1]
-    N, _ = size(e1) # face 1 restriction operator
-    (T11_1, T12_1, T13_1, 
-     T21_1, T22_1, T23_1, 
-     T31_1, T32_1, T33_1)  = T
-    # τ_y should be the y res of the traction == some mixed derivative and
-    # setting x traction to 0 to avoid tearing on fault 
-
-    # Do this stacking to just multply T by u, ie σyy = T21_1 u1 .+ T22_1 u2 .+ T23_1 us
-    T_2x = [T21_1 T22_1 T23_1]
-    T_3x = [T31_1 T32_1 T33_1]
-
-    # m and z should be +, but T21_.... have -1 built in 
-    τ_y_full = (-e1T * (T_2x * u)) # sJ[1][:]
-    τ_z_full = (-e1T * (T_3x * u)) # sJ[1][:]
-   
-    return [τ_y_full τ_z_full]
-  
-end
-
-function computetraction_stripped_shift(T, u, e, sJ, masks)
-
-    # Step 1, get the correct Traction terms for face 1
-    #[ σyx; σzx]
-    # (T11_1 .- Z11_1)'*e1*sJ1*H1*e1T
-    e1, e1T = e[1]
-    N, _ = size(e1) # face 1 restriction operator
-    (T11_1, T12_1, T13_1, 
-     T21_1, T22_1, T23_1, 
-     T31_1, T32_1, T33_1)  = T
-    # τ_y should be the y res of the traction == some mixed derivative and
-    # setting x traction to 0 to avoid tearing on fault 
-    mask1, mask2, mask3 = masks # unpack masks to pull out u's
-    
-    # Get new U's
-    u1 = mask1' * u
-    u2 = mask2' * u
-    u3 = mask3' * u
-
-    # m and z should be +, but T21_.... have -1 built in 
-    τ_y_full = (-e1T * ((T21_1 * u1) .+ (T22_1 * u2) .+ (T23_1 * u3))) # sJ[1][:]
-    τ_z_full = (-e1T * ((T31_1 * u1) .+ (T32_1 * u2) .+ (T33_1 * u3))) # sJ[1][:]
-   
-    return [τ_y_full τ_z_full]
-  
-end
-
-
-#=
-Helper functions for use in BP5 Benchmarks
-=#
-
-# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
-# 
-#
-# Domain and Operator Helpers
-#
-#
-# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
-
-# U is stacked so U = [U1; U2; U3], U1 = [U_111, U_112, U_113, U_121, U_122, ....] for U_xyz
-
-# Start with the Basics, pull out a given constant slice
-
-"""
-Helper function to grab a scalar value at position [x, y, z] for U_dir
-    Inputs:
-        u: stacked vector in x and y and z
-        index: tuple (x_in, y_in, z_in, dir)
-        num_vals: (Nx, Ny, Nz)
-    Output:
-        Num 
-"""
-function get_value(u, indexes, num_vals)
-    # Unpack indices
-    x, y, z, comp = indexes
-   
-    Nx, Ny, Nz = num_vals
-
-    # Calc Index
-    N = Nx * Ny * Nz
-    index = ((comp - 1) * N) + ((x - 1) * (Ny * Nz)) + ((y - 1) * (Nz)) + z
-
-    return u[index]
-end
-
-"""
-LOL Im re inventing view 
-Helper function to grab a vector value at position [x, y, z] for U_dir
-    Inputs:
-        u: stacked vector in x and y and z
-        index: tuple (x_in, y_in, z_in, dir)
-            1 set on indices will be a range i.e 1:N
-        num_vals: (Nx, Ny, Nz)
-    Output:
-        Num 
-"""
-
-function get_vector(u, indexes, num_vals)
-    
-    x, y, z, comp = indexes
-    Nx, Ny, Nz = num_vals
-    
-    # Calc Index
-    N = Nx .* Ny .* Nz
-    index = ((comp .- 1) .* N) .+ ((x .- 1) .* (Ny .* Nz)) .+ ((y .- 1) .* (Nz)) .+ z
-
-    return u[index]
-end
-
-# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
-# 
-#
-# Friction and Fault Helpers
-#
-#
-# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
-
-
-
-
-"""
-Helper function to get the rate a state parameter correct
-"""
-function RS_r(y, z, hs, ht, H, l)
-    return max(abs(z - hs - ht - H/2) - H/2, abs(y) - l/2) / ht 
-end
-
-"""
-Function to set the rate and state parameter for the fault face in BP5
-"""
-function initialize_friction_params_mat(RS_params, grid_params, Nθ, indices)
-
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
-
-    # Setup result matrix where values with be a_min, a_max, or r of a
-    rows = indices[1, 2] - indices[1, 1] + 1
-    cols = indices[2, 2] - indices[2, 1] + 1
-    res = zeros(rows, cols)
-    Nzp = length(z_grid)
-
-    for row in 1:rows
-
-        for col in 1:cols
-
-            # adjust the indices for the actual coefficient calc, kill myself
-            y_idx = row + indices[1, 1] - 1
-            z_idx = col + indices[2, 1] - 1
-
-            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
-                # Non RS zone
-                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
-               res[row, col] = 0.0
-
-            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
-                
-                if (z_grid[z_idx] <= hs) || (z_grid[z_idx] >= hs + H + 2*ht) || (abs(y_grid[y_idx]) >= l/2 + ht)
-                    # Get entire VS region
-                    res[row, col] = a_max
-                elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (abs(y_grid[y_idx]) < l/2)
-                    # VW and NZ
-                    res[row, col] = a_min
-                else
-                    # Transition Region
-                    res[row, col] = (RS_r(y_grid[y_idx], z_grid[z_idx], hs, ht, H, l) * (a_max - a_min)) + a_min
-
-                end
-            else
-                print("Error in VS Index setup")
-            end
-        end
-    end
-
-    return res
-
-end
-
-
-"""
-Function to set the rate and state parameter for the fault face in BP5
-"""
-function initialize_friction_params_vec(RS_params, grid_params, Nθ, indices)
-
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
-
-    # Setup result matrix where values with be a_min, a_max, or r of a
-    rows = indices[1, 2] - indices[1, 1] + 1
-    cols = indices[2, 2] - indices[2, 1] + 1
-    res = zeros(rows*cols)
-
-    for row in 1:rows
-
-        for col in 1:cols
-
-            # adjust the indices for the actual coefficient calc, kill myself
-            y_idx = row + indices[1, 1] - 1
-            z_idx = col + indices[2, 1] - 1
-
-            idx = (row - 1) * cols + col
-
-            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
-                # Non RS zone
-                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
-               res[idx] = 0.0
-
-            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
-                
-                if (z_grid[z_idx] <= hs) || (z_grid[z_idx] >= hs + H + 2*ht) || (abs(y_grid[y_idx]) >= l/2 + ht)
-                    # Get entire VS region
-                    res[idx] = a_max
-                elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (abs(y_grid[y_idx]) < l/2)
-                    # VW and NZ
-                    res[idx] = a_min
-                else
-                    # Transition Region
-                    res[idx] = (RS_r(y_grid[y_idx], z_grid[z_idx], hs, ht, H, l) * (a_max - a_min)) + a_min
-
-                end
-            else
-                print("Error in VS Index setup")
-            end
-        end
-    end
-
-    return res
-
-end
-
-
-"""
-Use a function to set the theta values according to BP5 description on the fault
-
-    Inputs: 
-        - RS_params and grid params per the previous functions to get fault data
-        - A coefficients to set them correctly
-    Output:
-        - Theta: 1 x num_nodes in fault where num_nodes will be the rate and state area (VS) area < Nyp x Nzp
-        - Indices: [y1, y2;   To keep track of where the area goes from
-                    z1, z2]   Kind of funky, will be 1:N_z dir .+ 1:Nzp:NypxNzp (sub rect at z=0) 
-                    
-        - Num nodes in theta 
-
-"""
-function set_theta(RS_params, grid_params)
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, RSVinit = RS_params
-
-    # STEP 1: Find the size of the RS zone
-
-    # Initialize stoppers
-    ny_start = 0
-    ny_end = 0
-    nz_end = 0
-
-    # Get Y nodes
-    for i in eachindex(y_grid)
-        if abs(y_grid[i]) <= lf/2 && ny_start == 0 
-            ny_start = i
-        end
-        if abs(y_grid[i]) > lf/2 && ny_end == 0 && ny_start != 0
-            ny_end = i-1
-            break
-        end
-    end
-
-    if ny_end == 0
-        ny_end = length(y_grid)
-    end
-
-    # get z nodes
-    for i in eachindex(z_grid)
-        if z_grid[i] > Wf
-            nz_end = i - 1
-            break
-        end
-    end
-
-    if ny_end == 0
-        ny_end = length(y_grid)
-    end
-
-    # Account for case where it all is in there
-    if nz_end == 0
-        nz_end = length(z_grid)
-    end
-
-    # print("\nDEBUG $(ny_start):$(ny_end), 1:$(nz_end)")
-    # initialize theta
-    θ = RSDc ./ RSVinit .* ones((nz_end) * (ny_end - ny_start + 1))
-    
-    return (θ, 
-            [ny_start ny_end; 1 nz_end;], 
-            (nz_end) * (ny_end - ny_start + 1))
-end
-            
-"""
-Modify τ term for BP5 Problem setup in Nucleation zone of Rate and State fault
-
-τ is a stacked vector [τy, τz] , but only τy is affected here
-"""
-function set_prestress_QD!(τ0, RS_params, grid_params, τ_params, Nθ, indices, Dc)
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
-    Vi, V0, Vinit, σn, η, RSb, RSf0 = τ_params 
-
-    rows = indices[1, 2] - indices[1, 1] + 1
-    cols = indices[2, 2] - indices[2, 1] + 1
-    
-    for row in 1:rows
-
-        for col in 1:cols
-            
-            y_idx = row + indices[1, 1] - 1
-            z_idx = col + indices[2, 1] - 1
-            idx = (row - 1) * cols + col
-
-            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
-                # in non rs zone 
-                nothing
-
-            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
-                
-                if (z_grid[z_idx] <= hs) || (z_grid[z_idx] >= hs + H + 2*ht) || (abs(y_grid[y_idx]) >= l/2 + ht)
-                    # Get entire VS region
-                    nothing
-                # GET Nucleation Zone here: First check Z requirements, then 1sided NZ
-                # Check with Brittany about this too 
-                #TODO
-                elseif (z_grid[z_idx] >= hs + ht && z_grid[z_idx] <= hs + ht + H) && (y_grid[y_idx] >= -l/2 && y_grid[y_idx] <= -l/2 + w)
-                    # Update τ0
-                    τ0[idx] = σn * a_min * asinh( (Vi / (2*V0)) * exp((RSf0 + RSb * log(V0 / Vinit)) / a_min) ) + (η * Vi)
-                    Dc[idx] = 0.13
-                else
-                    # Transition Region + VW not in W
-                    nothing
-
-                end
-            else
-                print("Error in VS Index setup")
-            end
-        end
-    end
-
-end
-
-
-"""
-Function to set the rate and state τ for the fault face in BP5 after a traction update
-"""
-function update_tau_v_vec(τ_full, v_full, RS_params, grid_params, Nθ, indices)
-
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
-
-    # Setup result matrix where values with be a_min, a_max, or r of a
-    rows = indices[1, 2] - indices[1, 1] + 1
-    cols = indices[2, 2] - indices[2, 1] + 1
-    N = rows * cols
-    res_t2 = zeros(N)
-    res_t3 = zeros(N)
-    res_v2 = zeros(N)
-    res_v3 = zeros(N)
-    
-
-    for row in 1:rows
-
-        for col in 1:cols
-
-            # adjust the indices for the actual coefficient calc, kill myself
-            y_idx = row + indices[1, 1] - 1
-            z_idx = col + indices[2, 1] - 1
-            actual_idx = (y_idx - 1) * Nzp + z_idx
-            idx = (row - 1) * cols + col
-
-            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
-                # Non RS zone
-                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
-               print("Error in VS Index setup")
-
-            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
-        
-                res_t2[idx] = τ_full[actual_idx] # set τy
-                res_t3[idx] = τ_full[actual_idx + (Nyp * Nzp)] # set τz since they're stacked
-                res_v2[idx] = v_full[actual_idx] # set τy
-                res_v3[idx] = v_full[actual_idx + (Nyp * Nzp)]
-              
-            else
-                print("Error in VS Index setup")
-            end
-        end
-    end
-
-    return res_t2, res_t3, res_v2, res_v3
-
-end
-
-
-"""
-Function to set the rate and state τ for the fault face in BP5 after a traction update
-"""
-function set_v_vec(v_full, RS_params, grid_params, Nθ, indices)
-
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
-
-    # Setup result matrix where values with be a_min, a_max, or r of a
-    rows = indices[1, 2] - indices[1, 1] + 1
-    cols = indices[2, 2] - indices[2, 1] + 1
-    N = rows * cols
-    res = zeros(2 * N)
-    
-
-    for row in 1:rows
-
-        for col in 1:cols
-
-            # adjust the indices for the actual coefficient calc, kill myself
-            y_idx = row + indices[1, 1] - 1
-            z_idx = col + indices[2, 1] - 1
-            actual_idx = (y_idx - 1) * Nzp + z_idx
-            idx = (row - 1) * cols + col
-
-            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
-                # Non RS zone
-                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
-               print("Error in VS Index setup")
-
-            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
-        
-                res[idx] = τ_full[actual_idx] # set τy
-                res[idx + N] = τ_full[actual_idx + (Nyp * Nzp)] # set τz since they're stacked
-              
-            else
-                print("Error in VS Index setup")
-            end
-        end
-    end
-
-    return res
-
-end
-"""
-Taken straight outta Alex's code lets goooo
-"""
-
-function rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)
-    # V and τ both stand for absolute value of slip rate and traction vecxtors. 
-    Y_v = (1 ./ (2 .* RSV0)) .* exp.(ψ ./ RSas)
-    f_v = RSas .* asinh.(V_v .* Y_v)
-    dfdV_v = RSas .* (1 ./ sqrt.(1 .+ (V_v .* Y_v) .^ 2)) .* Y_v
-  
-    g_v = σn .* f_v .+ η .* V_v .- τ_v
-    dgdV_v = σn .* dfdV_v .+ η
-    return (g_v, dgdV_v)
-end
-
-function newtbndv_vectorized(rateandstate_vectorized, xL, xR, V_v, ψ, σn, τ_v, η, 
-                        RSas, RSV0; ftol=1e-6, maxiter = 500, minchange = 0, atolx = 1e-4, rtolx=1e-4)
-    fL_v = rateandstate_vectorized(xL, ψ, σn, τ_v, η, RSas, RSV0)[1]
-    fR_v = rateandstate_vectorized(xR, ψ, σn, τ_v, η, RSas, RSV0)[1]
-
-    if any(x -> x > 0, fL_v .* fR_v)
-        return (fill(typeof(V_v)(NaN), length(V_v)), fill(typeof(V_v)(NaN), length(V_v)), -maxiter)
-    end
-
-    f_v, df_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)
-    dxlr_v = xR .- xL
-
-    for iter = 1:maxiter
-        dV_v = -f_v ./ df_v
-        V_v = V_v .+ dV_v
-        
-        mask = (V_v .< xL) .| (V_v .> xR) .| (abs.(dV_v) ./ dxlr_v .< minchange)
-        V_v[mask] .= (xR[mask] .+ xL[mask]) ./ 2
-        dV_v[mask] .= (xR[mask] .- xL[mask]) ./ 2
-
-        f_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)[1]
-        df_v = rateandstate_vectorized(V_v, ψ, σn, τ_v, η, RSas, RSV0)[2]
-        
-        mask_2 = f_v .* fL_v .> 0
-        fL_v[mask_2] .= f_v[mask_2]
-        xL[mask_2] .= V_v[mask_2]
-        fR_v[.!mask_2] .= f_v[.!mask_2]
-        xR[.!mask_2] .= V_v[.!mask_2]
-
-        dxlr_v .= xR .- xL
-
-        if all(abs.(f_v) .< ftol) && all(abs.(dV_v .< atolx .+ rtolx .* (abs.(dV_v) .+ abs.(V_v))))
-            return (V_v, f_v, iter)
-        end
-    end
-    return (V_v, f_v, -maxiter)
-
-end
-
-"""
-Update the actual RS velocity
-"""
-function update_V_RS_zone!(V, V_updates, RS_params, grid_params, Nθ, indices)
-
-    _, y_grid, z_grid,
-    Nxp, Nyp, Nzp = grid_params
-    ht, l, lf, w, Wf, hs, H, a_min, a_max, RSDc, Vinit = RS_params
-    Vy, Vz = V_updates
-
-    # Setup result matrix where values with be a_min, a_max, or r of a
-    rows = indices[1, 2] - indices[1, 1] + 1
-    cols = indices[2, 2] - indices[2, 1] + 1
-    res_y = zeros(rows*cols)
-    res_z = zeros(rows*cols)
-
-    for row in 1:rows
-
-        for col in 1:cols
-
-            # adjust the indices for the actual coefficient calc, kill myself
-            y_idx = row + indices[1, 1] - 1
-            z_idx = col + indices[2, 1] - 1
-            actual_idx = (y_idx - 1) * Nzp + z_idx
-            idx = (row - 1) * cols + col
-
-            if abs(y_grid[y_idx]) > lf / 2 || z_grid[z_idx] > Wf
-                # Non RS zone
-                # print("$((row, col)),  $(y_grid[row]), $(z_grid[col])\n")
-               nothing
-
-            elseif abs(y_grid[y_idx]) <= lf / 2 && z_grid[z_idx] <= Wf
-        
-                V[actual_idx] = Vy[idx] # set τy
-                V[actual_idx + (Nyp * Nzp)] = Vz[idx]
-                
-            else
-                print("Error in VS Index setup")
-            end
-        end
-    end
-
-    return [res_y res_z]
-end
-
- # Function that finds the depth-index corresponding to a station location
-function find_station_index(stations, y_grid, z_grid)
-      numstations = length(stations)
-      station_ind = zeros(numstations, 2)
-      for i in range(1, stop=numstations)
-        station_ind[i, 1] = argmin(abs.(y_grid .- stations[i][1])) # get y indx
-        station_ind[i, 2] = argmin(abs.(z_grid .- stations[i][2])) # get z indx
-      end
-    return Integer.(station_ind)
-end
-# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
-# 
-#
-# File and IO Helpers
-#
-#
-# - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - # - #
-
-            
-function read_params_BP5(f_name)
-    f = open(f_name, "r")
-    tmp_params = []
-    while ! eof(f)
-        s = readline(f)
-        if s[1] != '#'
-            push!(tmp_params, split(s, '=')[2])
-            flush(stdout)
-        end
-    end
-  close(f)
-
- 
-    #=  (pth, stride_space, stride_time, SBPp
-        xc, yc, zc
-        Hx, Hy, Hz, 
-        Nx, Ny, Nz, 
-        ρ, cs, ν, 
-        RSamin, RSamax, RSb
-        σn, RSDc, Vp,
-        RSV0, RSf0, RShs
-        RSht, RSH, RSl
-        RSlf, W, Δz,
-        sim years) = read_params(localARGS[1])
-    =#
-    params = Vector{Any}(undef, 36)
-    params[1] = strip(tmp_params[1]) # pth
-    params[2] = parse(Int64, tmp_params[2]) # stride_space
-    params[3] = parse(Int64, tmp_params[3]) # stride_time
-    params[4] = parse(Int64, tmp_params[4]) # SBPp 
-    params[5] = (parse(Float64, tmp_params[5]), parse(Float64, tmp_params[6])) # xc
-    params[6] = (parse(Float64, tmp_params[7]), parse(Float64, tmp_params[8])) # yc
-    params[7] = (parse(Float64, tmp_params[9]), parse(Float64, tmp_params[10])) # zc
-    params[8] = parse(Int64, tmp_params[11]) # Hx
-    params[9] = parse(Int64, tmp_params[12]) # Hy
-    params[10] = parse(Int64, tmp_params[13]) # Hz
-    params[11] = parse(Int64, tmp_params[14]) # Nx
-    params[12] = parse(Int64, tmp_params[15]) # Ny
-    params[13] = parse(Int64, tmp_params[16]) # Nz
-    params[14] = parse(Bool, tmp_params[17]) # cg flag
-    params[15] = parse(Bool, tmp_params[18]) # gpu flag
-    for i = 19:length(tmp_params)
-      params[i-3] = parse(Float64, tmp_params[i])
-    end
-    
-  return params
-end
-
-
-
-function uMask(u, i)
-
-    n = Int(length(u) / 3) # There should be 3 components for each point
-    @assert mod(length(u), 3) == 0 # Sanity check
-
-    e_component = zeros(3)
-
-    @assert i in 1:3 # confirm that we're grabbing an allowed component
-
-    e_component[i] = 1 # adjust the mask
-
-    id = sparse_i(n)
-
-    mask = sparse(kron(id, e_component))
-
-    return mask
-end
-
-"""
-Function to pull xith component out of matrix M where M = M1 .+ M2 .+ M3 (3 shifted matrices)
-"""
-
-function mMask(mat, i)
-    m, n = size(mat)
-    @assert mod(n, 3) == 0 # Sanity check
-
-    nSmall = Int(n / 3) # There should be 3 components for each point
-
-    e_component = zeros(3)
-
-    @assert i in 1:3 # confirm that we're grabbing an allowed component
-
-    e_component[i] = 1 # adjust the mask
-
-    id = sparse_i(nSmall)
-
-    mask = sparse(kron(id, e_component))
-
-    return mask
-end
-
-"""
-Function intersperse a vector u  to combine into components
-
-IMPORTANT: READ ME PLEASE
-
-If u = shift1 * u1 .+ shift2 * u2 .+ shift3 * u3
-
-Need to apply Mask result here
-"""
-
-function uShift(u, i)
-
-    n = length(u) # There should be 3 components for each point
-
-    e_component = zeros(3)
-
-    @assert i in 1:3 # confirm that we're grabbing an allowed component
-
-    e_component[i] = 1 # adjust the mask
-
-    id = sparse_i(n)
-
-    mask = sparse(kron(id, e_component))
-
-    return mask
-end
-
-"""
-Function intersperse a Matrix mat  to combine into components
-
-IMPORTANT: READ ME PLEASE
-
-If A = A1 + A2 + A3 after kroneckers i.e A = [A1_11 A2_11 A3_11 A1_12 A2_12 A3_12, .... etc]
-
-Need to apply Mask result here: A = (A1 * mShift(1)') .+ (A2 * mShift(2)') .+ (A3 * mShift(3)'))
-"""
-
-function mShift(mat, i)
-
-    m, n = size(mat)  # There should be 3 components for each point
-
-    e_component = zeros(3, 1)
-
-    @assert i in 1:3 # confirm that we're grabbing an allowed component
-
-    e_component[i] = 1 # adjust the mask
-
-    id = sparse_i(n)
-    
-
-    mask = sparse(kron(id, e_component))
-
-    return mask
-end
-
-"""
-Combine all of the shifts into 1 matrix R
-
-NOTES: R = R' = R_inv 
-Use for MRR'x = B
-"""
-function shift_operator(mat)
-    m, n = size(mat)
-    
-    e1 = spzeros(3,1)
-    e2 = spzeros(3,1)
-    e3 = spzeros(3,1)
-
-    e1[1] = 1
-    e2[2] = 1
-    e3[3] = 1
-
-    I = sparse_i(Int(n/3))
-    res = sparse([kron(I, e1) kron(I, e2) kron(I, e3)])
-
-    
-    return res
-
-end
-
-    
-
-
-function sparse_i(n::Int)
-    rows = 1:n
-    cols = 1:n
-    vals = ones(Float64, n)
-    return sparse(rows, cols, vals, n, n)
-end
+test()

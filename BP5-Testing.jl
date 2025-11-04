@@ -131,17 +131,15 @@ function main()
         # B == Boundary Coefs,
         # JH == Det of the Jacobian x H tilde,
         # A == D2, 
-        # S == SAT Coefs
-    print("\nCreating Operators....\n")
     @time (M, B, JH, A, S, HqI, HrI, HsI, T, e, H, HM) = locoperator(SBPp, Nq, Nr, Ns, metrics, metrics.C) # TODO: extraneaous C from metrics in there
     print("\nCreating Operators Done\n") 
 
-    M_cu = M # At first use CPU M as GPU
-  
+   
+   
      # initialize time and vector b that stores boundary data (linear system will be Au = b, where b = B*g)
     t = 0
     b = zeros(3 * Nqp * Nrp * Nsp) # this sucker is bigggggg 
-
+    
     # initial slip vector
     δ = zeros(2 * Nrp * Nsp) # 2D Plane aghhhh 3 components :|
 
@@ -152,135 +150,39 @@ function main()
     remote_boundary = zeros(Nrp * Nsp * 3)
     remote_boundary[Nrp*Nsp+1: 2*Nrp*Nsp] += (t * Vp/2) .* ones(Nrp*Nsp)
 
-    # set b for inital displacement calc
+    print("\nBuilding Mask and Shift Operators:\n\tTime:")
+    @time begin
+        shift = shift_operator(M)
+    end
+
     bdry_vec_strip!(b, B, δ ./ 2, remote_boundary, params)
-    
     # if doing backslash, do this up front
     # Everything will be done on CPU with Backslash
-    Pc = nothing
-    workspace=nothing
-    test_flag = false
-    non_iter_flag = true
-    mem_flag = true
-
-    if !cg_flag && !gpu_flag
-        print("\nCG flag set to False, running with Backslash")
-        print("\nGPU flag set to Fase, running on CPU")
-        print("\nGetting LU Factorization of M\n")
-        @time M = lu(M)
-        print("\nLU Factorization of M done\n")
-
-        # Calculate initial displacement t = 0
-        print("\nTime for 1st solve:")
-        u = M \ b
-        @time u = M \ b
-    elseif !cg_flag && gpu_flag
-        print("\nCG flag set to False, running with Backslash")
-        print("\nGPU flag set to True, running on GPU to solve linear system")
-    
-        print("\nCopying M to Device...")
-        M = CuArray(M)# M can be just on the GPU memory
-        print("Done")
-       
-        # Calculate initial displacement t = 0
-        print("\nTime for 1st solve:")
-        b = reshape(b, :, 1)
-        b_gpu = CuMatrix(b)
-        u_gpu = M \ b_gpu
-        @time u_gpu = M \ b_gpu
-        u = Array(u_gpu)
-
-    elseif  cg_flag && !gpu_flag
-        print("\nCG flag set to True, running with CG")
-        print("\nGPU flag set to Fase, running on CPU")
-        u = zeros(size(b)) # need to initialize u
-        print("\nTime for 1st solve:")
-        @time cg!(u, M, b)
-
-    elseif test_flag && non_iter_flag # these are testing flags and results will get added into other things
-        # First Get M to look right and be SPD
-        print("\nMaking HM SPD...")
-        HM .*= -1
-        M = HM
-        print("Done\n")
-
-        print("\nCopying HM to Device in CSR format...")
-        M_cu = CuSparseMatrixCSR(M) # Move PD matrix to GPU
-        print("Done\n")
-
-        print("\nGetting IC0 Factorization on Device...")
-        Pc_cu = KrylovPreconditioners.kp_ic0(M_cu) # Get incomplete cholesky decomp
-        print("Done\n")
-        
-       
-        u = zeros(size(b)) # need to initialize u
-        b_cu = CuArray(b)
-
-        
-        print("\nTime for 1st solve:")
-        u_cu, stats = Krylov.cg(M_cu, b_cu, M=Pc_cu, ldiv=true)
-        @time u_cu, stats = Krylov.cg(M_cu, b_cu, M=Pc_cu,  ldiv=true) # warmup
-        u .= Array(u_cu)
-
-        Pc = Pc_cu
-    elseif mem_flag # these are testing flags and results will get added into other things
-        # First Get M to look right and be SPD
-        print("\nMaking HM SPD...")
-        HM .*= -1
-        M = HM
-        print("Done\n")
-
-        print("\nCopying HM to Device in CSR format...")
-        M_cu = CuSparseMatrixCSR(M) # Move PD matrix to GPU
-        print("Done\n")
-
-        print("\nGetting IC0 Factorization on Device...")
-        Pc_cu = KrylovPreconditioners.kp_ic0(M_cu) # Get incomplete cholesky decomp
-        print("Done\n")
-        
-        
-        u = zeros(size(b)) # need to initialize u
-        b_cu = CuArray(b)
-        workspace = Krylov.CgWorkspace(M_cu, b_cu)
-        
-        print("\nTime for 1st solve:")
-        Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu, ldiv=true)
-        @time Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu, ldiv=true) # warmup
-        u .= Array(workspace.x)
-
-        Pc = Pc_cu
-
-    else 
-        # For now assume that Running CG on the GPU
-
-        # Need to do some work ahead of time to 
-            # 1: Assure that matrices are SPD i.e. multiplying by H tilde
-            # 2: Move some of them to the GPU
-        # fml TODO fix this to make it less hectic
-            # this is stupid
-
-        # First Get M to look right and be SPD
-        HM .*= -1
-        M = HM
-        
-        # Quick Fun about M
-        #λmax, φ = eigs(M, nev=2, which=:LM, maxiter=1000)
-        #λmin, φ = eigs(M, nev=2, which=:SM, maxiter=1000)
-
-        #print("\nLargest eigenvalues: $(λmax)\nSmallest eigenvalues: $(λmin)\n condition number: $(λmax[1] / λmin[1])\n")
-
-        M_cu = CuSparseMatrixCSR(M)
-
-        u = zeros(size(b)) # need to initialize u
-        u_gpu = CuArray(u)
-        
-        b_gpu = CuArray(b)
-        print("\nTime for 1st solve:")
-        cg!(u_gpu, M_cu, b_gpu) # warmup
-        @time cg!(u_gpu, M_cu, b_gpu) # warmup
-        u = Array(u_gpu)
-    end
    
+    # these are testing flags and results will get added into other things
+    # First Get M to look right and be SPD
+    print("\nMaking HM SPD...")
+    M_shift = (M * shift)'
+    M2 = M_shift * M_shift'
+    print("Done\n")
+
+    print("\nCopying HM to Device in CSR format...")
+    M_cu = CuSparseMatrixCSR(M2) # Move PD matrix to GPU
+    print("Done\n")
+    b = M_shift * b
+
+    u = zeros(size(b)) # need to initialize u
+
+    b_cu = CuArray(b)
+
+    workspace = Krylov.CgWorkspace(M_cu, b_cu)
+    
+
+    print("\nTime for 1st solve:")
+    Krylov.cg!(workspace, M_cu, b_cu)
+    @time Krylov.cg!(workspace, M_cu, b_cu) # warmup
+    u .= shift * Array(workspace.x)
+    
     # Following vectors, τ, RSa, θ will only apply to Face 1, and are size 1x(NspxNrp)
     # initialize change in shear stress due to quasi-static deformation
    
@@ -336,11 +238,13 @@ function main()
     station_indices = find_station_index(stations, y, z)
     station_strings = [ "0000", "0010", "0022", "1600", "1610", "3600", "-1600", "-1610", "-2410", "-3600"] # str names "$(x_digits)$(y_digits)" where each gets 2 digits e.g y=16,z=10 = "1610"
     
-    # set up parameters sent to the right hand side of the DAE:
+   
+    # TEST 1, NO PC
     odeparam = (reject_step = [false], 
                 sim_years =  sim_years,
                 Vp=Vp,
-                M = M,
+                M = M_shift,
+                M2 = M2,
                 u=u,
                 Δτ = Δτ_vec,
                 τf = τ0_vec.*ones(length(τ0_vec)),
@@ -366,28 +270,18 @@ function main()
                 RS_params = RS_params,
                 RS_indices = RS_indices,
                 t_prv = [0.0],
-                H = H,
                 M_cu = M_cu,
-                Pc = Pc,
+                Pc = nothing,
                 workspace=workspace,
                 counter=[0],
                 num_iters=[0],
                 num_nm_iters=[0],
                 num_aprods = [0],
-                name = "IC0"
+                name = "none",
+                shift=shift
                 )
     # Set time span over which to solve:
     tspan = (0, sim_years * year_seconds)
-
-    function condition(u, t, integrator)
-        return integrator.p.counter[1] < 20
-    end
-
-    function affect!(integrator)
-        terminate!(integrator)
-    end
-
-    cb_fun = ContinuousCallback(condition, affect!)
     # Set up ODE problem corresponding to DAE
     
     flt_loc_y = y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]
@@ -398,86 +292,25 @@ function main()
     # Set call-back function so that files are written to after successful time steps only.
     # cb_fun = SavingCallback((ψδ, t, i) -> write_to_file_BP5(pth, ψδ, t, i, y, z, flt_loc_y, flt_loc_z, flt_loc_indices,station_strings, station_indices, odeparam, "BP5_", 0.1 * year_seconds), SavedValues(Float64, Float64))
 
-    
-    
     # Testing block
     max_its = 50
     ### 
-    # 1 IC0
     ###
-    # Start with ICO preconditioner 
-    prob = ODEProblem(odefun_cg_testing, ψδ, tspan, odeparam)
+    #=
+    # Start with NO P_C
+    prob = ODEProblem(odefun_cg_testing_shift, ψδ, tspan, odeparam)
     
     # Solve DAE using Tsit5()
-    print("\nTime for IC0 Solve for 20 iterations:")
+    print("\nTime for No PC Solve for 20 iterations:")
     @time sol = solve(prob, Tsit5(); dt=0.2,
             abstol = 1e-5, reltol = 1e-5, save_everystep=true, gamma = 0.2,
-            internalnorm=(x, _)->norm(x, Inf), callback=cb_fun, maxiters=max_its)
+            internalnorm=(x, _)->norm(x, Inf), maxiters=max_its)
     n = odeparam.counter[1]
     print("\nAvg Num Iters: $(odeparam.num_iters[1]/n)")
     print("\nAvg Num NM Iters: $(odeparam.num_nm_iters[1]/n)")
     print("\nAvg Num A Prods: $(odeparam.num_aprods[1]/n)")
-    ### 
-    # 2 ILU0
-    ###
-    # Start with ILU preconditioner 
-    print("\nGetting ILU0 Factorization on Device...")
-    # set up parameters sent to the right hand side of the DAE:
-    Il_cu = KrylovPreconditioners.kp_ilu0(M_cu) # Get incomplete cholesky decomp
-    print("Done\n")
-    odeparam2 = (reject_step = [false], 
-                sim_years =  sim_years,
-                Vp=Vp,
-                M = M,
-                u=u,
-                Δτ = Δτ_vec,
-                τf = τ0_vec.*ones(length(τ0_vec)),
-                b = b,
-                μshear=μshear,
-                RSa=RSa,
-                RSb=RSb,
-                σn=σn,
-                η=η,
-                RSV0=RSV0,
-                Nθ = Nθ,
-                τ0=τ0_vec,
-                RSDc=RSDc,
-                RSf0=RSf0,
-                B = B,
-                T = T,
-                x = x,
-                y = y, 
-                z = z,
-                e = e,
-                sJ = metrics.sJ,
-                save_stride_fields = stride_time, # save every save_stride_fields time steps
-                RS_params = RS_params,
-                RS_indices = RS_indices,
-                t_prv = [0.0],
-                H = H,
-                M_cu = M_cu,
-                Pc = Il_cu,
-                workspace=workspace,
-                counter=[0],
-                num_iters=[0],
-                num_nm_iters=[0],
-                num_aprods = [0],
-                name = "ILU0"
-                )
-    
-    
-    prob = ODEProblem(odefun_cg_testing, ψδ, tspan, odeparam2)
-    
-    # Solve DAE using Tsit5()
-    print("\nTime for ILU0 Solve for 20 iterations:")
-    @time sol = solve(prob, Tsit5(); dt=0.2,
-            abstol = 1e-5, reltol = 1e-5, save_everystep=true, gamma = 0.2,
-            internalnorm=(x, _)->norm(x, Inf), callback=cb_fun, maxiters=max_its)
-    n = odeparam2.counter[1]
-    print("\nAvg Num Iters: $(odeparam2.num_iters[1]/n)")
-    print("\nAvg Num NM Iters: $(odeparam2.num_nm_iters[1]/n)")
-    print("\nAvg Num A Prods: $(odeparam2.num_aprods[1]/n)")
-
+    end
+    =#
     ### 
     # 3 BWJ
     ###
@@ -485,67 +318,76 @@ function main()
     print("\nGetting Blockwise Jacobi PC on Device...")
     BJ_cu = KrylovPreconditioners.kp_block_jacobi(M_cu) # Get incomplete cholesky decomp
     print("Done\n")
-    
-    odeparam3 = (reject_step = [false], 
-                sim_years =  sim_years,
-                Vp=Vp,
-                M = M,
-                u=u,
-                Δτ = Δτ_vec,
-                τf = τ0_vec.*ones(length(τ0_vec)),
-                b = b,
-                μshear=μshear,
-                RSa=RSa,
-                RSb=RSb,
-                σn=σn,
-                η=η,
-                RSV0=RSV0,
-                Nθ = Nθ,
-                τ0=τ0_vec,
-                RSDc=RSDc,
-                RSf0=RSf0,
-                B = B,
-                T = T,
-                x = x,
-                y = y, 
-                z = z,
-                e = e,
-                sJ = metrics.sJ,
-                save_stride_fields = stride_time, # save every save_stride_fields time steps
-                RS_params = RS_params,
-                RS_indices = RS_indices,
-                t_prv = [0.0],
-                H = H,
-                M_cu = M_cu,
-                Pc = BJ_cu,
-                workspace=workspace,
-                counter=[0],
-                num_iters=[0],
-                num_nm_iters=[0],
-                num_aprods = [0],
-                name = "BWJ"
-                )
-    prob = ODEProblem(odefun_cg_testing, ψδ, tspan, odeparam3)
-    
-    # Solve DAE using Tsit5()
-    print("\nTime for BWJ Solve for 20 iterations:")
-    @time sol = solve(prob, Tsit5(); dt=0.2,
-            abstol = 1e-5, reltol = 1e-5, save_everystep=true, gamma = 0.2,
-            internalnorm=(x, _)->norm(x, Inf), callback=cb_fun, maxiters=max_its)
+    for i in 1:4
+        
+        
 
-    n = odeparam3.counter[1]
-    print("\nAvg Num Iters: $(odeparam3.num_iters[1]/n)")
-    print("\nAvg Num NM Iters: $(odeparam3.num_nm_iters[1]/n)")
-    print("\nAvg Num A Prods: $(odeparam3.num_aprods[1]/n)")
-   
+        odeparam3 = (reject_step = [false], 
+                    sim_years =  sim_years,
+                    Vp=Vp,
+                    M = M_shift,
+                    M2 = M2,
+                    u=u,
+                    Δτ = Δτ_vec,
+                    τf = τ0_vec.*ones(length(τ0_vec)),
+                    b = b,
+                    μshear=μshear,
+                    RSa=RSa,
+                    RSb=RSb,
+                    σn=σn,
+                    η=η,
+                    RSV0=RSV0,
+                    Nθ = Nθ,
+                    τ0=τ0_vec,
+                    RSDc=RSDc,
+                    RSf0=RSf0,
+                    B = B,
+                    T = T,
+                    x = x,
+                    y = y, 
+                    z = z,
+                    e = e,
+                    sJ = metrics.sJ,
+                    save_stride_fields = stride_time, # save every save_stride_fields time steps
+                    RS_params = RS_params,
+                    RS_indices = RS_indices,
+                    t_prv = [0.0],
+                    M_cu = M_cu,
+                    Pc = BJ_cu,
+                    workspace=workspace,
+                    counter=[0],
+                    num_iters=[0],
+                    num_nm_iters=[0],
+                    num_aprods = [0],
+                    name = "BWJ",
+                    shift=shift
+                    )
+        prob = ODEProblem(odefun_cg_testing_shift, ψδ, tspan, odeparam3)
+        
+        # Solve DAE using Tsit5()
+        print("\nTime for BWJ Solve for 20 iterations:")
+        @time sol = solve(prob, Tsit5(); dt=0.2,
+                abstol = 1e-5, reltol = 1e-5, save_everystep=true, gamma = 0.2,
+                internalnorm=(x, _)->norm(x, Inf), maxiters=max_its)
+
+        n = odeparam3.counter[1]
+        print("\nAvg Num Iters: $(odeparam3.num_iters[1]/n)")
+        print("\nAvg Num NM Iters: $(odeparam3.num_nm_iters[1]/n)")
+        print("\nAvg Num A Prods: $(odeparam3.num_aprods[1]/n)")
+    end
+    
     ### 
-    # 5 No PC
+    # 5 CHolesky
     ###
+    #=
+    Ic_cu = KrylovPreconditioners.kp_ic0(M_cu)
     # Start with ILU preconditioner 
+    # TEST 1, NO PC
     odeparam5 = (reject_step = [false], 
                 sim_years =  sim_years,
                 Vp=Vp,
-                M = M,
+                M = M_shift,
+                M2 = M2,
                 u=u,
                 Δτ = Δτ_vec,
                 τf = τ0_vec.*ones(length(τ0_vec)),
@@ -571,30 +413,30 @@ function main()
                 RS_params = RS_params,
                 RS_indices = RS_indices,
                 t_prv = [0.0],
-                H = H,
                 M_cu = M_cu,
-                Pc = nothing,
+                Pc = Ic_cu,
                 workspace=workspace,
                 counter=[0],
                 num_iters=[0],
                 num_nm_iters=[0],
                 num_aprods = [0],
-                name = "none"
+                name = "IC0",
+                shift=shift
                 )
-    prob = ODEProblem(odefun_cg_testing, ψδ, tspan, odeparam5)
+    prob = ODEProblem(odefun_cg_testing_shift, ψδ, tspan, odeparam5)
     
     # Solve DAE using Tsit5()
     print("\nTime for no PC Solve for 20 iterations:")
     @time sol = solve(prob, Tsit5(); dt=0.2,
             abstol = 1e-5, reltol = 1e-5, save_everystep=true, gamma = 0.2,
-            internalnorm=(x, _)->norm(x, Inf), callback=cb_fun, maxiters=max_its)
+            internalnorm=(x, _)->norm(x, Inf),  maxiters=max_its)
 
     n = odeparam5.counter[1]
     print("\nAvg Num Iters: $(odeparam5.num_iters[1]/n)")
     print("\nAvg Num NM Iters: $(odeparam5.num_nm_iters[1]/n)")
     print("\nAvg Num A Prods: $(odeparam5.num_aprods[1]/n)")
 
-
+   =#
 end
 
 main()

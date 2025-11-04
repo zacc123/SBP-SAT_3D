@@ -4,7 +4,7 @@
 #
 # details of output data:
 # path to directory that stores output data
-pth = ./TEST_128x128/
+pth = ./GRID_SEARCH_64_1/
 # write-out every "stride_space" grid points along fault
 stride_space = 1
 # write-out every "stride_time" time steps
@@ -34,16 +34,16 @@ Hz = 5
 #
 # number of grid points in each dimension 
 # make sure to resolve h* and l_b; should be written as integer.
-Nx = 32
-Ny = 32
-Nz = 32
+Nx = 64
+Ny = 64
+Nz = 64
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # # 
 # Driver options
 # # # # # # # # # # # # # # # # # # # # # 
 # # # # # # # # # # # # # # # # # # # # #
 # Use Conjugate Gradient or Backslash
-shift_flag = true
+cg_flag = true
 # Use GPU to solve
 gpu_flag = true
 # # # # # # # # # # # # # # # # # # # # # 

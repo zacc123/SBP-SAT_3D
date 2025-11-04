@@ -34,7 +34,7 @@ function main()
      xc, yc, zc,
      Hx, Hy, Hz, 
      Nx, Ny, Nz, 
-     cg_flag, gpu_flag,
+     shift_flag, gpu_flag,
      ρ, cs, ν, 
      RSamin, RSamax, RSb,
      σn, RSDc, Vp, RSVinit,
@@ -156,47 +156,7 @@ function main()
     
     # if doing backslash, do this up front
     # Everything will be done on CPU with Backslash
-    Pc = nothing
-    workspace=nothing
-    test_flag = false
-    non_iter_flag = true
-    mem_flag = true
-
-    if !cg_flag && !gpu_flag
-        print("\nCG flag set to False, running with Backslash")
-        print("\nGPU flag set to Fase, running on CPU")
-        print("\nGetting LU Factorization of M\n")
-        @time M = lu(M)
-        print("\nLU Factorization of M done\n")
-
-        # Calculate initial displacement t = 0
-        print("\nTime for 1st solve:")
-        u = M \ b
-        @time u = M \ b
-    elseif !cg_flag && gpu_flag
-        print("\nCG flag set to False, running with Backslash")
-        print("\nGPU flag set to True, running on GPU to solve linear system")
-    
-        print("\nCopying M to Device...")
-        M = CuArray(M)# M can be just on the GPU memory
-        print("Done")
-       
-        # Calculate initial displacement t = 0
-        print("\nTime for 1st solve:")
-        b = reshape(b, :, 1)
-        b_gpu = CuMatrix(b)
-        u_gpu = M \ b_gpu
-        @time u_gpu = M \ b_gpu
-        u = Array(u_gpu)
-
-    elseif  cg_flag && !gpu_flag
-        print("\nCG flag set to True, running with CG")
-        print("\nGPU flag set to Fase, running on CPU")
-        u = zeros(size(b)) # need to initialize u
-        print("\nTime for 1st solve:")
-        @time cg!(u, M, b)
-
-    elseif test_flag && non_iter_flag # these are testing flags and results will get added into other things
+    if !shift_flag # these are testing flags and results will get added into other things
         # First Get M to look right and be SPD
         print("\nMaking HM SPD...")
         HM .*= -1
@@ -208,76 +168,53 @@ function main()
         print("Done\n")
 
         print("\nGetting IC0 Factorization on Device...")
-        Pc_cu = KrylovPreconditioners.kp_ic0(M_cu) # Get incomplete cholesky decomp
+        Pc_cu = KrylovPreconditioners.kp_block_jacobi(M_cu) # Get BJ decomp
         print("Done\n")
-        
-       
-        u = zeros(size(b)) # need to initialize u
-        b_cu = CuArray(b)
-
-        
-        print("\nTime for 1st solve:")
-        u_cu, stats = Krylov.cg(M_cu, b_cu, M=Pc_cu, ldiv=true)
-        @time u_cu, stats = Krylov.cg(M_cu, b_cu, M=Pc_cu,  ldiv=true) # warmup
-        u .= Array(u_cu)
-
-        Pc = Pc_cu
-    elseif mem_flag # these are testing flags and results will get added into other things
-        # First Get M to look right and be SPD
-        print("\nMaking HM SPD...")
-        HM .*= -1
-        M = HM
-        print("Done\n")
-
-        print("\nCopying HM to Device in CSR format...")
-        M_cu = CuSparseMatrixCSR(M) # Move PD matrix to GPU
-        print("Done\n")
-
-        print("\nGetting IC0 Factorization on Device...")
-        Pc_cu = KrylovPreconditioners.kp_ic0(M_cu) # Get incomplete cholesky decomp
-        print("Done\n")
-        
         
         u = zeros(size(b)) # need to initialize u
         b_cu = CuArray(b)
         workspace = Krylov.CgWorkspace(M_cu, b_cu)
         
         print("\nTime for 1st solve:")
-        Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu, ldiv=true)
-        @time Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu, ldiv=true) # warmup
+        Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu)
+        @time Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu) # warmup
         u .= Array(workspace.x)
 
         Pc = Pc_cu
 
-    else 
-        # For now assume that Running CG on the GPU
+    else # Now M is shifted
+        print("\nCreating Shift Operator...")
+        shift = shift_operator(M)
+        print("DONE")
 
-        # Need to do some work ahead of time to 
-            # 1: Assure that matrices are SPD i.e. multiplying by H tilde
-            # 2: Move some of them to the GPU
-        # fml TODO fix this to make it less hectic
-            # this is stupid
+        print("\nShifting M...")
+        M_shifted = M * shift
+        print("DONE")
 
-        # First Get M to look right and be SPD
-        HM .*= -1
-        M = HM
+        M_sT = M_shifted'
+
+        print("\nMaking M SPD...")
+        M2 = M_sT * M_shifted # make matrix spd
+        print("DONE")
+
+        print("\nCopying M to Device in CSR format...")
+        M_cu = CuSparseMatrixCSR(M2) # Move PD matrix to GPU
+        print("Done\n")
         
-        # Quick Fun about M
-        #λmax, φ = eigs(M, nev=2, which=:LM, maxiter=1000)
-        #λmin, φ = eigs(M, nev=2, which=:SM, maxiter=1000)
-
-        #print("\nLargest eigenvalues: $(λmax)\nSmallest eigenvalues: $(λmin)\n condition number: $(λmax[1] / λmin[1])\n")
-
-        M_cu = CuSparseMatrixCSR(M)
-
+        print("\nGetting Blockwise Jacobi on Device...")
+        Pc_cu = KrylovPreconditioners.kp_block_jacobi(M_cu) # Get BJ decomp
+        print("Done\n")
+        b = M_sT * b
+        
         u = zeros(size(b)) # need to initialize u
-        u_gpu = CuArray(u)
+        b_cu = CuArray(b)
+        workspace = Krylov.CgWorkspace(M_cu, b_cu)
         
-        b_gpu = CuArray(b)
         print("\nTime for 1st solve:")
-        cg!(u_gpu, M_cu, b_gpu) # warmup
-        @time cg!(u_gpu, M_cu, b_gpu) # warmup
-        u = Array(u_gpu)
+        Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu)
+        @time Krylov.cg!(workspace, M_cu, b_cu, M=Pc_cu) # warmup
+        u .= shift * Array(workspace.x)
+        Pc = Pc_cu
     end
    
     # Following vectors, τ, RSa, θ will only apply to Face 1, and are size 1x(NspxNrp)
@@ -335,8 +272,29 @@ function main()
     station_indices = find_station_index(stations, y, z)
     station_strings = [ "0000", "0010", "0022", "1600", "1610", "3600", "-1600", "-1610", "-2410", "-3600"] # str names "$(x_digits)$(y_digits)" where each gets 2 digits e.g y=16,z=10 = "1610"
     
-    # set up parameters sent to the right hand side of the DAE:
-    odeparam = (reject_step = [false], 
+    # Set time span over which to solve:
+    tspan = (0, sim_years * year_seconds)
+
+    # TO DO 
+    # Insert problem setups
+
+    flt_loc_y = y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]
+    flt_loc_z = z[RS_indices[2, 1]:stride_space:RS_indices[2, 2]] 
+               
+    flt_loc_indices = RS_indices
+    
+    # Set call-back function so that files are written to after successful time steps only.
+    cb_fun = SavingCallback((ψδ, t, i) -> write_to_file_BP5(pth, ψδ, t, i, y, z, flt_loc_y, flt_loc_z, flt_loc_indices,station_strings, station_indices, odeparam, "BP5_", 0.1 * year_seconds), SavedValues(Float64, Float64))
+
+    # Start here getting all this machinery working : ()
+    # Make text files to store on-fault time series and slip data,
+    # Also initialize with initial data:
+    create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, RSVzero, δ, τ0_vec, θ, y, z)
+    
+    
+    if !shift_flag
+        # set up parameters sent to the right hand side of the DAE:
+        odeparam = (reject_step = [false], 
                 sim_years =  sim_years,
                 Vp=Vp,
                 M = M,
@@ -370,32 +328,49 @@ function main()
                 Pc = Pc,
                 workspace=workspace
                 )
-    # Set time span over which to solve:
-    tspan = (0, sim_years * year_seconds)
-
-    # Set up ODE problem corresponding to DAE
-    if cg_flag && mem_flag
         prob = ODEProblem(odefun_cg_gpu_mem, ψδ, tspan, odeparam)
-    elseif cg_flag && !gpu_flag
-        prob = ODEProblem(odefun_cg, ψδ, tspan, odeparam)
-    elseif !cg_flag && gpu_flag
-        prob = ODEProblem(odefun_gpu, ψδ, tspan, odeparam)
     else
-        prob = ODEProblem(odefun, ψδ, tspan, odeparam)
+
+        odeparam = (reject_step = [false], 
+                sim_years =  sim_years,
+                Vp=Vp,
+                M = M_sT,
+                u=u,
+                Δτ = Δτ_vec,
+                τf = τ0_vec.*ones(length(τ0_vec)),
+                b = b,
+                μshear=μshear,
+                RSa=RSa,
+                RSb=RSb,
+                σn=σn,
+                η=η,
+                RSV0=RSV0,
+                Nθ = Nθ,
+                τ0=τ0_vec,
+                RSDc=RSDc,
+                RSf0=RSf0,
+                B = B,
+                T = T,
+                x = x,
+                y = y, 
+                z = z,
+                e = e,
+                sJ = metrics.sJ,
+                save_stride_fields = stride_time, # save every save_stride_fields time steps
+                RS_params = RS_params,
+                RS_indices = RS_indices,
+                t_prv = [0.0],
+                H = H,
+                M_cu = M_cu,
+                Pc = Pc,
+                workspace=workspace,
+                shift=shift
+                )
+        prob = ODEProblem(odefun_cg_gpu_mem_shift, ψδ, tspan, odeparam)
     end
 
-    flt_loc_y = y[RS_indices[1, 1]:stride_space:RS_indices[1, 2]]
-    flt_loc_z = z[RS_indices[2, 1]:stride_space:RS_indices[2, 2]] 
-               
-    flt_loc_indices = RS_indices
     
-    # Set call-back function so that files are written to after successful time steps only.
-    cb_fun = SavingCallback((ψδ, t, i) -> write_to_file_BP5(pth, ψδ, t, i, y, z, flt_loc_y, flt_loc_z, flt_loc_indices,station_strings, station_indices, odeparam, "BP5_", 0.1 * year_seconds), SavedValues(Float64, Float64))
-
-    # Start here getting all this machinery working : ()
-    # Make text files to store on-fault time series and slip data,
-    # Also initialize with initial data:
-    create_text_files(pth, flt_loc_y, flt_loc_z, flt_loc_indices, stations, station_strings, station_indices, 0, RSVinit, RSVzero, δ, τ0_vec, θ, y, z)
+    
     
     # Solve DAE using Tsit5()
     @time sol = solve(prob, Tsit5(); dt=0.2,
